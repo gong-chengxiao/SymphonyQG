@@ -44,19 +44,19 @@ struct Index {
     ) {
         if (metric != "L2") {
             std::cerr << "Only L2 distance supported currently\n";
-            return;
+            throw std::invalid_argument("Only L2 distance supported currently");
         }
 
         if (degree < 32 || degree % 32 != 0) {
             std::cerr << "The degree bound must be a multiple of 32\n";
-            return;
+            throw std::invalid_argument("The degree bound must be a multiple of 32");
         }
 
         if (index_type == "QG") {
             index = std::make_unique<symqg::QuantizedGraph>(num_points, degree, dim);
         } else {
             std::cerr << "Index type [" << index_type << "] not supported\n";
-            return;
+            throw std::invalid_argument("Index type [" + index_type + "] not supported");   
         }
     }
 
@@ -82,7 +82,7 @@ struct Index {
                 << "The shape of data is different with initialization! Expected shape: ("
                 << index->num_vertices() << ", " << index->dimension() << "), but got: ("
                 << num << ", " << dim << ")\n";
-            return;
+            throw std::invalid_argument("The shape of data is different with initialization! Expected shape: (" + std::to_string(index->num_vertices()) + ", " + std::to_string(index->dimension()) + "), but got: (" + std::to_string(num) + ", " + std::to_string(dim) + ")");
         }
         symqg::QGBuilder builder(*index, ef_indexing, items.data(), num_threads);
         builder.build(num_iter);
@@ -119,7 +119,7 @@ PYBIND11_MODULE(symphonyqg, m) {
             py::arg("data"),
             py::arg("EF"),
             py::arg("num_iter") = 3,
-            py::arg("num_thread") = UINT_MAX
+            py::arg("num_threads") = UINT_MAX
         )
         .def("search", &Index::search, py::arg("query"), py::arg("k"));
 }
