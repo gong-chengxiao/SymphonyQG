@@ -2,7 +2,7 @@ from utils.io import fvecs_read, ivecs_read
 from utils.preprocess import normalize
 import symphonyqg
 from time import time
-from settings import EF, datasets, degrees, iter
+from settings import EF, datasets, degrees, iter, datasets_dir
 
 if __name__ == "__main__":
 
@@ -10,9 +10,8 @@ if __name__ == "__main__":
         DISTANCE = datasets[DATASET]
         ITER = iter[DATASET]
 
-        base = fvecs_read(f"./data/{DATASET}/{DATASET}_base.fvecs")
-        query = fvecs_read(f"./data/{DATASET}/{DATASET}_query.fvecs")
-        gt = ivecs_read(f"./data/{DATASET}/{DATASET}_groundtruth.ivecs")
+        base = fvecs_read(f"{datasets_dir}/{DATASET}/{DATASET}_base.fvecs")
+        query = fvecs_read(f"{datasets_dir}/{DATASET}/{DATASET}_query.fvecs")
 
         N, D = base.shape
 
@@ -29,10 +28,10 @@ if __name__ == "__main__":
                 degree_bound=DEGREE,
             )
             t1 = time()
-            index.build_index(base, EF, num_iter=ITER)
+            index.build_index(base, EF, num_iter=ITER, num_thread=32)
             t2 = time()
             print(f"The construction time for {DATASET}{DEGREE} is {t2-t1}")
 
-            index_path = f"./data/{DATASET}/symphonyqg_{DEGREE}.index"
+            index_path = f"{datasets_dir}/{DATASET}/symphonyqg_{DEGREE}.index"
 
             index.save(index_path)
