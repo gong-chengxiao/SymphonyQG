@@ -34,7 +34,7 @@ ext_modules = [
         libraries=libraries,
         language="c++",
         extra_objects=extra_objects,
-        # extra_compile_args=["g"],
+        # extra_compile_args=["-O0", "-g"],
     ),
 ]
 
