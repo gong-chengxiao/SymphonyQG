@@ -37,12 +37,17 @@ class SearchBuffer {
     explicit SearchBuffer(size_t capacity) : data_(capacity + 1), capacity_(capacity) {}
 
     // insert a data point into buffer
-    void insert(PID data_id, float dist) {
+    int insert(PID data_id, float dist) {
         size_t lo = binary_search(dist);
         std::memmove(&data_[lo + 1], &data_[lo], (size_ - lo) * sizeof(Candidate<float>));
         data_[lo] = Candidate<float>(data_id, dist);
         size_ += static_cast<size_t>(size_ < capacity_);
         cur_ = lo < cur_ ? lo : cur_;
+        if (lo == cur_) {
+            // return 1 if the new data point is in the head of the buffer
+            return 1;
+        }
+        return 0;
     }
 
     [[nodiscard]] auto is_full(float dist) const -> bool {
