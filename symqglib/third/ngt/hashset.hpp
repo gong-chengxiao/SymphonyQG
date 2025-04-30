@@ -31,7 +31,8 @@ class HashBasedBooleanSet {
    private:
     size_t table_size_ = 0;
     PID mask_ = 0;
-    std::vector<PID, memory::AlignedAllocator<PID>> table_;
+    std::vector<std::atomic<PID>, memory::AlignedAllocator<std::atomic<PID>>> table_;
+    mutable std::mutex mutex_;
     std::unordered_set<PID> stl_hash_;
 
     [[nodiscard]] auto hash1(const PID value) const { return value & mask_; }
@@ -93,7 +94,12 @@ class HashBasedBooleanSet {
         if (val == data_id) {
             return true;
         }
-        return (val != kPidMax && stl_hash_.find(data_id) != stl_hash_.end());
+        if (val == kPidMax) {
+            return false;
+        } else {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return stl_hash_.find(data_id) != stl_hash_.end();
+        }
     }
 
     void set(PID data_id) {
@@ -104,6 +110,7 @@ class HashBasedBooleanSet {
         if (val == kPidMax) {
             val = data_id;
         } else {
+            std::lock_guard<std::mutex> lock(mutex_);
             stl_hash_.emplace(data_id);
         }
     }
