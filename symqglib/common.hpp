@@ -14,7 +14,7 @@ namespace symqg {
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 
 using PID = uint32_t;
-constexpr uint32_t kPidMax = 0xFFFFFFFF;
+constexpr uint32_t kPidMax = 0x7FFFFFFF;
 
 template <typename T>
 using RowMatrix = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
