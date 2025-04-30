@@ -85,9 +85,9 @@ class BucketBuffer {
    private:
     size_t w_collector_, w_scanner_, num_collector_, num_scanner_;
     size_t h_;          /* height of each bucket */
-    size_t capacity_;   /* capacity == w_collector_ * num_collector_ * h_ */
+    size_t capacity_;   /* total capacity of buckets == w_collector_ * num_collector_ * h_ */
     std::vector<SearchBuffer> buckets_;
-    std::vector<PID> strip_;
+    std::vector<std::atomic<PID>> strip_;
 
     static void set_checked(PID& data_id) { data_id |= (1 << 31); }
 
@@ -109,7 +109,7 @@ class BucketBuffer {
         {
 
             this->buckets_ = std::vector<SearchBuffer>(this->w_collector_ * this->num_collector_);
-            this->strip_ = std::vector<PID>(this->w_scanner_ * this->num_scanner_);
+            this->strip_ = std::vector<std::atomic<PID>>(this->w_scanner_ * this->num_scanner_);
 
             for (size_t i = 0; i < this->w_collector_ * this->num_collector_; ++i) {
                 this->buckets_[i] = SearchBuffer(this->h_);
@@ -123,6 +123,18 @@ class BucketBuffer {
             }
         }
         return true;
+    }
+
+    [[nodiscard]] auto has_next(size_t collector_id) const -> bool {
+        size_t bucket_start = collector_id * this->w_collector_;
+        size_t bucket_end = bucket_start + this->w_collector_;
+
+        for (size_t i = bucket_start; i < bucket_end; ++i) {
+            if (this->buckets_[i].has_next()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /* shrink or expand h_ by a factor of new_size/capacity_ */
@@ -250,7 +262,7 @@ class Strip {
         COLLECTING,
         COLLECTED
     };
-    StripState* state_;
+    std::vector<std::atomic<StripState>> state_;
 
    public:
     Strip() = default;
@@ -264,12 +276,25 @@ class Strip {
         capacity_(w_scanner * num_scanner * w_),
         dist_(new float[capacity_]),
         pids_(new size_t[w_scanner * num_scanner]),
-        state_(new StripState[w_scanner * num_scanner])
+        state_(w_scanner * num_scanner)
         {
             assert(this->w_scanner_ * this->num_scanner_ == this->w_collector_ * this->num_collector_);
         }
     
-    void set_scanned(size_t& scanner_id, PID& pid) {
+    /* return if any collector's scanner is scanning */
+    [[nodiscard]] bool is_scanning(size_t collector_id) const {
+        size_t strip_start = collector_id * this->w_collector_;
+        size_t strip_end = strip_start + this->w_collector_;
+
+        for (size_t i = strip_start; i < strip_end; ++i) {
+            if (this->state_[i] == StripState::SCANNING) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void set_scanned(size_t scanner_id, PID pid) {
         size_t strip_start = scanner_id * this->w_scanner_;
         size_t strip_end = strip_start + this->w_scanner_;
 
@@ -284,7 +309,7 @@ class Strip {
         throw std::runtime_error("pid not found in scanner's strip");
     }
 
-    void set_collected(size_t& collector_id, PID& pid) {
+    void set_collected(size_t collector_id, PID pid) {
         size_t strip_start = collector_id * this->w_collector_;
         size_t strip_end = strip_start + this->w_collector_;
 
@@ -307,13 +332,14 @@ class Strip {
             for (size_t i = strip_start; i < strip_end; ++i) {
                 if (this->state_[i] == StripState::COLLECTED) {
                     this->state_[i] = StripState::SCANNING;
+                    this->pids_[i] = pid;
                     return this->dist_ + i * this->w_;
                 }
             }
         }
     }
 
-    [[nodiscard]] std::pair<size_t, float*> get_collector_strip(size_t collector_id) {
+    [[nodiscard]] std::pair<PID, float*> get_collector_strip(size_t collector_id) {
         size_t strip_start = collector_id * this->w_collector_;
         size_t strip_end = strip_start + this->w_collector_;
 
