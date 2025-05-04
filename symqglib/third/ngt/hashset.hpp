@@ -40,17 +40,6 @@ class HashBasedBooleanSet {
    public:
     HashBasedBooleanSet() = default;
 
-    HashBasedBooleanSet(const HashBasedBooleanSet& other)
-        : table_size_(other.table_size_)
-        , mask_(other.mask_)
-        , table_(other.table_)
-        , stl_hash_(other.stl_hash_) {}
-
-    HashBasedBooleanSet(HashBasedBooleanSet&& other) noexcept
-        : table_size_(other.table_size_)
-        , mask_(other.mask_)
-        , table_(std::move(other.table_))
-        , stl_hash_(std::move(other.stl_hash_)) {}
     HashBasedBooleanSet& operator=(HashBasedBooleanSet&& other) noexcept {
         table_size_ = other.table_size_;
         mask_ = other.mask_;
@@ -79,7 +68,7 @@ class HashBasedBooleanSet {
             std::cerr << "[WARN] table size is not 2^N :  " << table_size << '\n';
         }
 
-        table_ = std::vector<PID, memory::AlignedAllocator<PID>>(table_size);
+        table_ = std::vector<std::atomic<PID>, memory::AlignedAllocator<std::atomic<PID>>>(table_size);
         std::fill(table_.begin(), table_.end(), kPidMax);
         stl_hash_.clear();
     }
@@ -103,7 +92,7 @@ class HashBasedBooleanSet {
     }
 
     void set(PID data_id) {
-        PID& val = table_[hash1(data_id)];
+        PID val = table_[hash1(data_id)];
         if (val == data_id) {
             return;
         }

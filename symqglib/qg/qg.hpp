@@ -55,6 +55,11 @@ class QuantizedGraph {
     HashBasedBooleanSet visited_;
     buffer::SearchBuffer search_pool_;
 
+    mutable std::mutex result_pool_mutex_;
+    buffer::ResultBuffer result_pool_;
+    
+    std::atomic<bool> is_search_finished_;
+
     /*
      * Position of different data in each row
      *      RawData + QuantizationCodes + Factors + neighborIDs
@@ -66,6 +71,14 @@ class QuantizedGraph {
     size_t neighbor_offset_ = 0;  // pos of Neighbors
     size_t row_offset_ = 0;       // length of entire row
 
+    size_t num_collectors_;
+    size_t num_scanners_;
+    size_t w_collector_;
+    size_t w_scanner_;
+
+    buffer::Strip strip_;
+    buffer::BucketBuffer bucket_buffer_;
+
     void initialize();
 
     // search on quantized graph
@@ -74,6 +87,16 @@ class QuantizedGraph {
     );
 
     void copy_vectors(const float*);
+
+    void search_qg_parallel(
+        const float* __restrict__ query, uint32_t knn, uint32_t* __restrict__ results
+    );
+
+    void buckets_prepare(const QGQuery& q_obj);
+
+    void scanner(const size_t scanner_id, const QGQuery& q_obj);
+
+    void collector(const size_t collector_id);
 
     [[nodiscard]] float* get_vector(PID data_id) {
         return &data_.at(row_offset_ * data_id);
@@ -162,7 +185,14 @@ inline QuantizedGraph::QuantizedGraph(size_t num, size_t max_deg, size_t dim)
     , scanner_(padded_dim_, degree_bound_)
     , rotator_(dimension_)
     , visited_(100)
-    , search_pool_(0) {
+    , search_pool_(0)
+    , result_pool_(0)
+    , num_collectors_(1)
+    , num_scanners_(1)
+    , w_collector_(1)
+    , w_scanner_(1)
+    , bucket_buffer_(w_collector_, w_scanner_, num_collectors_, num_scanners_, 0)
+    , strip_(degree_bound_, w_scanner_, num_scanners_, w_collector_, num_collectors_) {
     initialize();
 }
 
@@ -230,7 +260,7 @@ inline void QuantizedGraph::load_index(const char* filename) {
 }
 
 inline void QuantizedGraph::set_ef(size_t cur_ef) {
-    this->search_pool_.resize(cur_ef);
+    this->bucket_buffer_.resize(cur_ef);
     this->visited_ = HashBasedBooleanSet(std::min(this->num_points_ / 10, cur_ef * cur_ef));
 }
 
@@ -243,7 +273,11 @@ inline void QuantizedGraph::search(
     /* Init query matrix */
     this->visited_.clear();
     this->search_pool_.clear();
-    search_qg(query, knn, results);
+    this->is_search_finished_ = false;
+    this->bucket_buffer_.clear();
+    this->strip_.clear();
+
+    search_qg_parallel(query, knn, results);
 }
 
 /**
@@ -288,6 +322,152 @@ inline void QuantizedGraph::search_qg(
 
     update_results(res_pool, query);
     res_pool.copy_results(results);
+}
+
+inline void QuantizedGraph::search_qg_parallel(
+    const float* __restrict__ query, uint32_t knn, uint32_t* __restrict__ results
+) {
+    this->result_pool_ = buffer::ResultBuffer(knn);
+
+    // query preparation
+    QGQuery q_obj(query, padded_dim_);
+    q_obj.query_prepare(rotator_, scanner_);
+
+    buckets_prepare(q_obj);
+
+    /* spawn threads for scanners and collectors (sequence is important!) */
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i < num_scanners_; ++i) {
+        threads.emplace_back(&QuantizedGraph::scanner, this, i, q_obj);
+    }
+    for (size_t i = 0; i < num_collectors_; ++i) {
+        threads.emplace_back(&QuantizedGraph::collector, this, i);
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    update_results(result_pool_, query);
+    result_pool_.copy_results(results);
+}
+
+/* fill buckets of all collectors */
+inline void QuantizedGraph::buckets_prepare(
+    const QGQuery& q_obj
+) {
+    size_t collector_id = 0;
+    PID cur_node = this->entry_point_;
+    bool filled = false;
+    while (!filled) {
+        float* appro_dist = new float[degree_bound_];
+        const float* cur_data = get_vector(cur_node);
+
+        float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
+
+        /* Compute approximate distance by Fast Scan */
+        const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
+        const auto* factor = &cur_data[factor_offset_];
+        this->scanner_.scan_neighbors(
+            appro_dist,
+            q_obj.lut().data(),
+            sqr_y,
+            q_obj.lower_val(),
+            q_obj.width(),
+            q_obj.sumq(),
+            packed_code,
+            factor
+        );
+
+        const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
+
+        for (size_t j = 0; j < degree_bound_; ++j) {
+            PID cur_neighbor = ptr_nb[j];
+            float tmp_dist = appro_dist[j];
+            if (bucket_buffer_.is_full(collector_id, tmp_dist) || visited_.get(cur_neighbor)) {
+                continue;
+            }
+            bucket_buffer_.insert(collector_id, cur_neighbor, tmp_dist);
+            if (collector_id == num_collectors_ - 1) {
+                collector_id = 0;
+                filled = true;
+            } else {
+                ++collector_id;
+            }
+        }
+
+        result_pool_mutex_.lock();
+        result_pool_.insert(cur_node, sqr_y);
+        result_pool_mutex_.unlock();
+    }
+}
+
+inline void QuantizedGraph::scanner(
+    const size_t scanner_id,
+    const QGQuery& q_obj
+) {
+    /* sequence is important! */
+    while (strip_.is_scanned() || strip_.is_collecting() || bucket_buffer_.has_next(scanner_id)) {
+        PID cur_node = bucket_buffer_.try_pop(scanner_id);
+        if (cur_node == 1U << 31 || visited_.get(cur_node)) {
+            continue;
+        }
+        visited_.set(cur_node);
+        float* appro_dist = strip_.get_scanner_buffer(scanner_id, cur_node);
+        const float* cur_data = get_vector(cur_node);
+        float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
+        
+        const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
+        const auto* factor = &cur_data[factor_offset_];
+
+        this->scanner_.scan_neighbors(
+            appro_dist,
+            q_obj.lut().data(),
+            sqr_y,
+            q_obj.lower_val(),
+            q_obj.width(),
+            q_obj.sumq(),
+            packed_code,
+            factor
+        );
+
+        strip_.set_scanned(scanner_id, cur_node);
+
+        result_pool_mutex_.lock();
+        result_pool_.insert(cur_node, sqr_y);
+        result_pool_mutex_.unlock();
+
+    }
+    is_search_finished_ = true;
+}
+
+inline void QuantizedGraph::collector(
+    const size_t collector_id
+) {
+    while (!is_search_finished_) {
+        std::pair<PID, float*> pair = strip_.try_get_collector_buffer(collector_id);
+        if (pair.second == nullptr) {
+            continue;
+        }
+
+        PID cur_node = pair.first;
+        float* appro_dist = pair.second;
+        
+        float* cur_data = get_vector(cur_node);
+        const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
+
+        for (uint32_t i = 0; i < degree_bound_; ++i) {
+            PID cur_neighbor = ptr_nb[i];
+            float tmp_dist = appro_dist[i];
+            if (bucket_buffer_.is_full(collector_id, tmp_dist) || visited_.get(cur_neighbor)) {
+                // std::cout << "full, visited: " << bucket_buffer_.is_full(collector_id, tmp_dist) << ' ' << visited_.get(cur_neighbor) << std::endl;
+                continue;
+            }
+            bucket_buffer_.insert(collector_id, cur_neighbor, tmp_dist);
+        }
+
+        strip_.set_collected(collector_id, cur_node);
+    }
 }
 
 // scan a data row (including data vec and quantization codes for its neighbors)
