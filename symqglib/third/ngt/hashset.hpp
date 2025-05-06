@@ -92,7 +92,7 @@ class HashBasedBooleanSet {
     }
 
     void set(PID data_id) {
-        PID val = table_[hash1(data_id)];
+        std::atomic<PID>& val = table_[hash1(data_id)];
         if (val == data_id) {
             return;
         }
