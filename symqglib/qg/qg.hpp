@@ -20,6 +20,8 @@
 #include "./qg_query.hpp"
 #include "./qg_scanner.hpp"
 
+// #define DEBUG
+
 namespace symqg {
 /**
  * @brief this Factor only for illustration, the true storage is continous
@@ -55,7 +57,7 @@ class QuantizedGraph {
     HashBasedBooleanSet visited_;
     buffer::SearchBuffer search_pool_;
 
-    mutable std::mutex result_pool_mutex_;
+    std::mutex result_pool_mutex_;
     buffer::ResultBuffer result_pool_;
     
     std::atomic<bool> is_search_finished_;
@@ -102,7 +104,7 @@ class QuantizedGraph {
         return &data_.at(row_offset_ * data_id);
     }
 
-    [[nodiscard]] const float* get_vector(PID data_id) const {
+    __attribute__((noinline)) [[nodiscard]] const float* get_vector(PID data_id) const {
         return &data_.at(row_offset_ * data_id);
     }
 
@@ -189,10 +191,10 @@ inline QuantizedGraph::QuantizedGraph(size_t num, size_t max_deg, size_t dim)
     , result_pool_(0)
     , num_collectors_(1)
     , num_scanners_(1)
-    , w_collector_(1)
-    , w_scanner_(1)
-    , bucket_buffer_(w_collector_, w_scanner_, num_collectors_, num_scanners_, 0)
-    , strip_(degree_bound_, w_scanner_, num_scanners_, w_collector_, num_collectors_) {
+    , w_collector_(4)
+    , w_scanner_(4)
+    , strip_(degree_bound_, w_scanner_, num_scanners_, w_collector_, num_collectors_)
+    , bucket_buffer_(w_collector_, w_scanner_, num_collectors_, num_scanners_, 0, 4) {
     initialize();
 }
 
@@ -332,10 +334,21 @@ inline void QuantizedGraph::search_qg_parallel(
     // query preparation
     QGQuery q_obj(query, padded_dim_);
     q_obj.query_prepare(rotator_, scanner_);
-
+#if defined(DEBUG)
+    auto t1 = std::chrono::high_resolution_clock::now();
+#endif
     buckets_prepare(q_obj);
-
+#if defined(DEBUG)
+    auto t2 = std::chrono::high_resolution_clock::now();
+    std::stringstream ss;
+    ss << "buckets_prepare time: "
+              << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()
+              << " ns" << std::endl;
+#endif
     /* spawn threads for scanners and collectors (sequence is important!) */
+#if defined(DEBUG)
+    t1 = std::chrono::high_resolution_clock::now();
+#endif
     std::vector<std::thread> threads;
     for (size_t i = 0; i < num_scanners_; ++i) {
         threads.emplace_back(&QuantizedGraph::scanner, this, i, q_obj);
@@ -343,6 +356,11 @@ inline void QuantizedGraph::search_qg_parallel(
     for (size_t i = 0; i < num_collectors_; ++i) {
         threads.emplace_back(&QuantizedGraph::collector, this, i);
     }
+#if defined(DEBUG)
+    t2 = std::chrono::high_resolution_clock::now();
+    ss << "spawning time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+    std::cout << ss.str();
+#endif
 
     for (auto& thread : threads) {
         thread.join();
@@ -359,8 +377,8 @@ inline void QuantizedGraph::buckets_prepare(
     size_t collector_id = 0;
     PID cur_node = this->entry_point_;
     bool filled = false;
+    float* appro_dist = new float[degree_bound_];
     while (!filled) {
-        float* appro_dist = new float[degree_bound_];
         const float* cur_data = get_vector(cur_node);
 
         float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
@@ -400,6 +418,7 @@ inline void QuantizedGraph::buckets_prepare(
         result_pool_.insert(cur_node, sqr_y);
         result_pool_mutex_.unlock();
     }
+    delete[] appro_dist;
 }
 
 inline void QuantizedGraph::scanner(
@@ -407,16 +426,42 @@ inline void QuantizedGraph::scanner(
     const QGQuery& q_obj
 ) {
     /* sequence is important! */
-    while (strip_.is_scanned() || strip_.is_collecting() || bucket_buffer_.has_next(scanner_id)) {
+    while (strip_.is_scanned() || strip_.is_collecting() || bucket_buffer_.has_next()) {
+#if defined(DEBUG)
+        auto t1 = std::chrono::high_resolution_clock::now();
+#endif
         PID cur_node = bucket_buffer_.try_pop(scanner_id);
         if (cur_node == 1U << 31 || visited_.get(cur_node)) {
             continue;
         }
         visited_.set(cur_node);
+#if defined(DEBUG)
+        auto t2 = std::chrono::high_resolution_clock::now();
+        std::stringstream ss;
+        ss << "scanner try_pop time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+#endif
+
+#if defined(DEBUG)
+        t1 = std::chrono::high_resolution_clock::now();
+#endif
         float* appro_dist = strip_.get_scanner_buffer(scanner_id, cur_node);
+#if defined(DEBUG)
+        t2 = std::chrono::high_resolution_clock::now();
+        ss << "scanner get_scanner_buffer time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+#endif
+
+#if defined(DEBUG)
+        t1 = std::chrono::high_resolution_clock::now();
+#endif
         const float* cur_data = get_vector(cur_node);
         float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
-        
+#if defined(DEBUG)
+        t2 = std::chrono::high_resolution_clock::now();
+        ss << "scanner l2_sqr time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+#endif
+#if defined(DEBUG)
+        t1 = std::chrono::high_resolution_clock::now();
+#endif
         const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
         const auto* factor = &cur_data[factor_offset_];
 
@@ -431,43 +476,70 @@ inline void QuantizedGraph::scanner(
             factor
         );
 
-        strip_.set_scanned(scanner_id, cur_node);
-
+        strip_.set_scanned(scanner_id);
+#if defined(DEBUG)
+        t2 = std::chrono::high_resolution_clock::now();
+        ss << "scanner scan_neighbors time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+#endif
+#if defined(DEBUG)
+        t1 = std::chrono::high_resolution_clock::now();
+#endif
         result_pool_mutex_.lock();
         result_pool_.insert(cur_node, sqr_y);
         result_pool_mutex_.unlock();
-
+#if defined(DEBUG)
+        t2 = std::chrono::high_resolution_clock::now();
+        ss << "scanner insert result time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+        std::cout << ss.str();
+#endif
     }
     is_search_finished_ = true;
+    // std::cout << "Scanner " << scanner_id << " finished\n";
 }
 
 inline void QuantizedGraph::collector(
     const size_t collector_id
 ) {
     while (!is_search_finished_) {
+#if defined(DEBUG)
+        auto t1 = std::chrono::high_resolution_clock::now();
+#endif
         std::pair<PID, float*> pair = strip_.try_get_collector_buffer(collector_id);
         if (pair.second == nullptr) {
+            bucket_buffer_.try_promote(collector_id);
             continue;
         }
-
         PID cur_node = pair.first;
         float* appro_dist = pair.second;
-        
         float* cur_data = get_vector(cur_node);
+#if defined(DEBUG)
+        auto t2 = std::chrono::high_resolution_clock::now();
+        std::stringstream ss;
+        ss << "collector try_get_collector_buffer time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+#endif
+#if defined(DEBUG)
+        t1 = std::chrono::high_resolution_clock::now();
+#endif
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
 
         for (uint32_t i = 0; i < degree_bound_; ++i) {
             PID cur_neighbor = ptr_nb[i];
             float tmp_dist = appro_dist[i];
             if (bucket_buffer_.is_full(collector_id, tmp_dist) || visited_.get(cur_neighbor)) {
-                // std::cout << "full, visited: " << bucket_buffer_.is_full(collector_id, tmp_dist) << ' ' << visited_.get(cur_neighbor) << std::endl;
                 continue;
             }
             bucket_buffer_.insert(collector_id, cur_neighbor, tmp_dist);
         }
+        bucket_buffer_.try_promote(collector_id);
 
-        strip_.set_collected(collector_id, cur_node);
+        strip_.set_collected(collector_id);
+#if defined(DEBUG)
+        t2 = std::chrono::high_resolution_clock::now();
+        ss << "collector insert time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+        std::cout << ss.str();
+#endif
     }
+    // std::cout << "Collector " << collector_id << " finished\n";
 }
 
 // scan a data row (including data vec and quantization codes for its neighbors)
@@ -499,14 +571,14 @@ inline float QuantizedGraph::scan_neighbors(
     for (uint32_t i = 0; i < cur_degree; ++i) {
         PID cur_neighbor = ptr_nb[i];
         float tmp_dist = appro_dist[i];
-#if defined(DEBUG)
-        std::cout << "Neighbor ID " << cur_neighbor << '\n';
-        std::cout << "Appro " << appro_dist[i] << '\t';
-        float __gt_dist__ = l2_sqr(query, get_vector(cur_neighbor), dimension_);
-        std::cout << "GT " << __gt_dist__ << '\t';
-        std::cout << "Error " << (appro_dist[i] - __gt_dist__) / __gt_dist__ << '\t';
-        std::cout << "sqr_y " << sqr_y << '\n';
-#endif
+// #if defined(DEBUG)
+//         std::cout << "Neighbor ID " << cur_neighbor << '\n';
+//         std::cout << "Appro " << appro_dist[i] << '\t';
+//         float __gt_dist__ = l2_sqr(query, get_vector(cur_neighbor), dimension_);
+//         std::cout << "GT " << __gt_dist__ << '\t';
+//         std::cout << "Error " << (appro_dist[i] - __gt_dist__) / __gt_dist__ << '\t';
+//         std::cout << "sqr_y " << sqr_y << '\n';
+// #endif
         if (search_pool.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
             continue;
         }
