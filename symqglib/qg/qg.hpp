@@ -398,7 +398,7 @@ inline void QuantizedGraph::search_qg_parallel(
 #if defined(DEBUG)
     t2 = std::chrono::high_resolution_clock::now();
     ss << "spawning time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
-    std::cout << ss.str();
+    // std::cout << ss.str();
 #endif
 
     for (auto& thread : threads) {
@@ -492,6 +492,9 @@ inline void QuantizedGraph::scanner(
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
+        memory::mem_prefetch_l1(
+            reinterpret_cast<const char*>(cur_data), 20
+        );
         float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
