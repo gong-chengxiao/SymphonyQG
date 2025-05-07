@@ -7,6 +7,8 @@
 #include "./memory.hpp"
 #include <iostream>
 
+#define NOT_FOUND 1U << 31
+
 namespace symqg::buffer {
 // @brief sorted linear buffer, served as beam set
 class SearchBuffer {
@@ -119,7 +121,7 @@ class BucketBuffer {
                 this->buckets_[i] = SearchBuffer(this->h_bucket_);
             }
             for (size_t i = 0; i < this->w_scanner_ * this->num_scanners_ * this->h_strip_; ++i) {
-                this->strip_[i] = 1U << 31;
+                this->strip_[i] = NOT_FOUND;
             }
         }
 
@@ -128,7 +130,7 @@ class BucketBuffer {
             this->buckets_[i].clear();
         }
         for (size_t i = 0; i < this->w_scanner_ * this->num_scanners_ * this->h_strip_; ++i) {
-            this->strip_[i] = 1U << 31;
+            this->strip_[i] = NOT_FOUND;
         }
     }
     
@@ -186,34 +188,19 @@ class BucketBuffer {
                 return pid;
             }
         }
-        return 1U << 31;
+        return NOT_FOUND;
     }
 
     void insert(size_t collector_id, PID data_id, float dist) {
-
         size_t start = this->w_collector_ * collector_id;
         size_t end = start + this->w_collector_;
-        size_t bucket_id = start;
         
         for (size_t i = start; i < end; ++i) {
             if (!this->buckets_[i].is_full(dist)) {
-                bucket_id = i;
-                break;
+                this->buckets_[i].insert(data_id, dist);
+                return;
             }
         }
-
-        /* insert into bucket */
-        this->buckets_[bucket_id].insert(data_id, dist);
-
-        /* pop heads of buckets to strip if any sapce left */
-        // for (size_t i = start; i < end; ++i) {
-        //     for (size_t j = start * this->h_strip_; j < end * this->h_strip_; ++j) {
-        //         if (is_checked(this->strip_[j]) && this->buckets_[i].has_next()) {
-        //             PID pid = this->buckets_[i].pop();
-        //             this->strip_[j] = pid;
-        //         }
-        //     }
-        // }
     }
 
     void try_promote(size_t collector_id) {
@@ -221,10 +208,9 @@ class BucketBuffer {
         size_t end = start + this->w_collector_;
 
         for (size_t i = start; i < end; ++i) {
-            for (size_t j = start * this->h_strip_; j < end * this->h_strip_; ++j) {
+            for (size_t j = i * this->h_strip_; j < (i + 1) * this->h_strip_; ++j) {
                 if (is_checked(this->strip_[j]) && this->buckets_[i].has_next()) {
-                    PID pid = this->buckets_[i].pop();
-                    this->strip_[j] = pid;
+                    this->strip_[j] = this->buckets_[i].pop();
                 }
             }
         }
@@ -235,7 +221,7 @@ class BucketBuffer {
 class Strip {
    private:
     float* dist_;
-    std::vector<std::atomic<PID>> pids_;
+    std::vector<PID> pids_;
     size_t w_scanner_, num_scanners_;
     size_t w_collector_, num_collectors_;
     size_t w_;          /* mininal operation width ( == max_degree) */
@@ -267,7 +253,7 @@ class Strip {
             assert(this->w_scanner_ * this->num_scanners_ == this->w_collector_ * this->num_collectors_);
 
             dist_ = new float[capacity_];
-            pids_ = std::vector<std::atomic<PID>>(w_scanner_ * num_scanners_);
+            pids_ = std::vector<PID>(w_scanner_ * num_scanners_);
             for (size_t i = 0; i < this->w_scanner_ * this->num_scanners_; ++i) {
                 this->state_[i] = StripState::COLLECTED;
             }
@@ -359,7 +345,7 @@ class Strip {
             if (this->state_[i].compare_exchange_strong(expected, desired)) {
                 this->num_collecting_.fetch_add(1);
                 this->num_scanned_.fetch_sub(1);
-                return std::make_pair(this->pids_[i].load(), this->dist_ + i * this->w_);
+                return std::make_pair(this->pids_[i], this->dist_ + i * this->w_);
             }
         }
         return std::make_pair(1U << 31, nullptr);
