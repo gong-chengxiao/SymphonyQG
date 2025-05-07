@@ -92,15 +92,17 @@ class HashBasedBooleanSet {
     }
 
     void set(PID data_id) {
-        std::atomic<PID>& val = table_[hash1(data_id)];
-        if (val == data_id) {
+        PID expected = kPidMax;
+        PID desired = data_id;
+        if (table_[hash1(data_id)].compare_exchange_strong(expected, desired)) {
             return;
-        }
-        if (val == kPidMax) {
-            val = data_id;
+        } else if (expected == data_id) {
+            return;
         } else {
             std::lock_guard<std::mutex> lock(mutex_);
-            stl_hash_.emplace(data_id);
+            if (stl_hash_.find(data_id) == stl_hash_.end()) {
+                stl_hash_.emplace(data_id);
+            }
         }
     }
 };
