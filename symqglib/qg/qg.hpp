@@ -431,7 +431,7 @@ inline void QuantizedGraph::scanner(
         auto t1 = std::chrono::high_resolution_clock::now();
 #endif
         PID cur_node = bucket_buffer_.try_pop(scanner_id);
-        if (cur_node == 1U << 31 || visited_.get(cur_node)) {
+        if (cur_node == NOT_FOUND || visited_.get(cur_node)) {
             continue;
         }
         visited_.set(cur_node);
@@ -525,7 +525,7 @@ inline void QuantizedGraph::collector(
         for (uint32_t i = 0; i < degree_bound_; ++i) {
             PID cur_neighbor = ptr_nb[i];
             float tmp_dist = appro_dist[i];
-            if (bucket_buffer_.is_full(collector_id, tmp_dist) || visited_.get(cur_neighbor)) {
+            if (visited_.get(cur_neighbor)) {
                 continue;
             }
             bucket_buffer_.insert(collector_id, cur_neighbor, tmp_dist);
