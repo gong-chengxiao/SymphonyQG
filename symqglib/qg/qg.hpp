@@ -474,6 +474,7 @@ inline void QuantizedGraph::scanner(
             continue;
         }
         visited_.set(cur_node);
+        const float* cur_data = get_vector(cur_node);
 #if defined(DEBUG)
         auto t2 = std::chrono::high_resolution_clock::now();
         this->scanner_try_pop_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -491,7 +492,6 @@ inline void QuantizedGraph::scanner(
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
-        const float* cur_data = get_vector(cur_node);
         float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
@@ -547,9 +547,6 @@ inline void QuantizedGraph::collector(
             bucket_buffer_.try_promote(collector_id);
             continue;
         }
-        PID cur_node = pair.first;
-        float* appro_dist = pair.second;
-        float* cur_data = get_vector(cur_node);
 #if defined(DEBUG)
         auto t2 = std::chrono::high_resolution_clock::now();
         this->collector_try_get_collector_buffer_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -557,14 +554,17 @@ inline void QuantizedGraph::collector(
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
+        PID cur_node = pair.first;
+        float* appro_dist = pair.second;
+        float* cur_data = get_vector(cur_node);
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
 
         for (uint32_t i = 0; i < degree_bound_; ++i) {
             PID cur_neighbor = ptr_nb[i];
-            float tmp_dist = appro_dist[i];
             if (visited_.get(cur_neighbor)) {
                 continue;
             }
+            float tmp_dist = appro_dist[i];
             bucket_buffer_.insert(collector_id, cur_neighbor, tmp_dist);
         }
         strip_.set_collected(collector_id);
