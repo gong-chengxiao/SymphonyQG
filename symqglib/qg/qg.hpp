@@ -47,7 +47,9 @@ class QuantizedGraph {
     mutable uint64_t scanner_wall_time_, collector_wall_time_;
     mutable uint64_t scanner_cpu_time_, collector_cpu_time_;
     mutable uint64_t scan_count_;
-    
+    mutable uint64_t scanner_pop_time_, scanner_scan_time_, scanner_l2_sqr_time_, scanner_insert_result_time_;
+    mutable uint64_t collector_insert_time_;
+
     mutable uint64_t num_is_in_head_;
 
     data::Array<
@@ -257,18 +259,24 @@ inline void QuantizedGraph::search(
     // scanner_cpu_time_ = 0;
     // collector_cpu_time_ = 0;
     scan_count_ = 0;
-    num_is_in_head_ = 0;
+    // num_is_in_head_ = 0;
     // scanner_.scan_count_ = 0;
     // scanner_.cpu_time_ = 0;
     // scanner_.wall_time_ = 0;
 
+    scanner_l2_sqr_time_ = 0;
+    scanner_scan_time_ = 0;
+    scanner_pop_time_ = 0;
+    scanner_insert_result_time_ = 0;
+    collector_insert_time_ = 0;
+
     search_qg(query, knn, results);
     // print time as a table
-    std::cout
-    << dimension_ << "," 
-    << degree_bound_ << ","
-    << num_is_in_head_ << ","
-    << scan_count_ << ","
+    // std::cout
+    // << dimension_ << "," 
+    // << degree_bound_ << ","
+    // << num_is_in_head_ << ","
+    // << scan_count_ << ","
     // << scanner_wall_time_ / scan_count_ << "," 
     // << collector_wall_time_ / scan_count_ << ","
     // << scanner_cpu_time_ / scanner_wall_time_ << ","
@@ -276,7 +284,13 @@ inline void QuantizedGraph::search(
     // << scanner_.cpu_time_ / scanner_.scan_count_ << ","
     // << scanner_.wall_time_ / scanner_.scan_count_ << ","
     // << scanner_.cpu_time_ / scanner_.wall_time_ << ","
-    << std::endl;
+    // << std::endl;
+
+    std::cout << "scanner pop time:             " << scanner_pop_time_ / scan_count_ << " ns" << '\n';
+    std::cout << "scanner l2_sqr time:          " << scanner_l2_sqr_time_ / scan_count_ << " ns" << '\n';
+    std::cout << "scanner scan time:            " << scanner_scan_time_ / scan_count_ << " ns" << '\n';
+    std::cout << "scanner insert result time:   " << scanner_insert_result_time_ / scan_count_ << " ns" << '\n';
+    std::cout << "collector insert time:        " << collector_insert_time_ / scan_count_ << " ns" << '\n';
 }
 
 /**
@@ -311,27 +325,88 @@ inline void QuantizedGraph::search_qg(
     //         this->search_pool_,
     //         this->degree_bound_
     //     );
-        // res_pool.insert(loop_node, sqr_y);
-        // if (loop_node == num_points_ - 1) {
-        //     loop_node = 0;
-        // }
+    //     res_pool.insert(loop_node, sqr_y);
+    //     if (loop_node == num_points_ - 1) {
+    //         loop_node = 0;
+    //     }
     // }
 
     while (search_pool_.has_next()) {
+        // timespec u1, u2;
+        // int64_t cpu_time = 0;
+        // uint64_t wall_time;
+        scan_count_++;
+
+        auto t1 = std::chrono::high_resolution_clock::now();
         PID cur_node = search_pool_.pop();
         if (visited_.get(cur_node)) {
             continue;
         }
         visited_.set(cur_node);
+        const float* cur_data = get_vector(cur_node);
+        auto t2 = std::chrono::high_resolution_clock::now();
+        scanner_pop_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 
-        float sqr_y = scan_neighbors(
-            q_obj,
-            get_vector(cur_node),
-            appro_dist.data(),
-            this->search_pool_,
-            this->degree_bound_
-        );
+        t1 = std::chrono::high_resolution_clock::now();
+        // clock_gettime(RUSAGE_SELF, &u1);
+        volatile float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
+        // float sqr_y = 0;
+        // float sqr_y = l2_c_;
+        t2 = std::chrono::high_resolution_clock::now();
+        scanner_l2_sqr_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+
+        t1 = std::chrono::high_resolution_clock::now();
         res_pool.insert(cur_node, sqr_y);
+        t2 = std::chrono::high_resolution_clock::now();
+        scanner_insert_result_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+
+        t1 = std::chrono::high_resolution_clock::now();
+        /* Compute approximate distance by Fast Scan */
+        const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
+        const auto* factor = &cur_data[factor_offset_];
+        this->scanner_.scan_neighbors(
+            appro_dist.data(),
+            q_obj.lut().data(),
+            sqr_y,
+            q_obj.lower_val(),
+            q_obj.width(),
+            q_obj.sumq(),
+            packed_code,
+            factor
+        );
+        t2 = std::chrono::high_resolution_clock::now();
+        scanner_scan_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+
+        // cpu_time = (static_cast<int64_t>(u2.tv_sec) - static_cast<int64_t>(u1.tv_sec)) * 1e9 +
+        //            (static_cast<int64_t>(u2.tv_nsec) - static_cast<int64_t>(u1.tv_nsec));
+        // scanner_wall_time_ += wall_time;
+        // scanner_cpu_time_ += cpu_time;
+
+        t1 = std::chrono::high_resolution_clock::now();
+        // clock_gettime(RUSAGE_SELF, &u1);
+        // uint64_t is_in_head = 0;
+        const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
+        for (uint32_t i = 0; i < degree_bound_; ++i) {
+            PID cur_neighbor = ptr_nb[i];
+            float tmp_dist = appro_dist[i];
+            if (search_pool_.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
+                continue;
+            }
+            search_pool_.insert(cur_neighbor, tmp_dist);
+            // is_in_head |= search_pool_.insert(cur_neighbor, tmp_dist);
+            memory::mem_prefetch_l2(
+                reinterpret_cast<const char*>(get_vector(search_pool_.next_id())), 10
+            );
+        }
+        // num_is_in_head_ += is_in_head;
+        // clock_gettime(RUSAGE_SELF, &u2);
+        t2 = std::chrono::high_resolution_clock::now();
+        collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+        
+        // cpu_time = (static_cast<int64_t>(u2.tv_sec) - static_cast<int64_t>(u1.tv_sec)) * 1e9 +
+        //            (static_cast<int64_t>(u2.tv_nsec) - static_cast<int64_t>(u1.tv_nsec));
+        // collector_wall_time_ += wall_time;
+        // collector_cpu_time_ += (cpu_time - collector_cpu_time_) / collector_count_;
     }
 
     update_results(res_pool, query);
