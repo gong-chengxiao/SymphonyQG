@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <condition_variable>
 
 #include "../common.hpp"
 #include "../quantization/rabitq.hpp"
@@ -81,6 +82,20 @@ class QuantizedGraph {
     buffer::Strip strip_;
     buffer::BucketBuffer bucket_buffer_;
 
+    std::vector<std::thread> scanner_threads_;
+    std::vector<std::thread> collector_threads_;
+
+    std::mutex search_mutex_;
+    std::condition_variable start_work_cv_;         /* To signal workers to start a new search task */
+    std::condition_variable work_finished_cv_;      /* To signal main thread that workers are done */
+
+    std::atomic<bool> search_task_available_ = false;
+    bool shutdown_workers_ = false;
+    bool is_scanner_task_finished_ = false;
+    bool is_collector_task_finished_ = false;
+
+    const QGQuery* cur_query_;
+
 #if defined(DEBUG)
     std::atomic<size_t> num_scanned_;
     std::atomic<size_t> num_collected_;
@@ -111,9 +126,11 @@ class QuantizedGraph {
 
     void buckets_prepare(const QGQuery& q_obj);
 
-    void scanner(const size_t scanner_id, const QGQuery& q_obj);
+    void scanner_task(const size_t scanner_id, const QGQuery& q_obj);
+    void collector_task(const size_t collector_id);
 
-    void collector(const size_t collector_id);
+    void scanner_loop(const size_t scanner_id);
+    void collector_loop(const size_t collector_id);
 
     [[nodiscard]] float* get_vector(PID data_id) {
         return &data_.at(row_offset_ * data_id);
@@ -171,6 +188,24 @@ class QuantizedGraph {
 
    public:
     explicit QuantizedGraph(size_t, size_t, size_t);
+    ~QuantizedGraph() {
+        {
+            std::lock_guard<std::mutex> lock(search_mutex_);
+            shutdown_workers_ = true;
+            is_search_finished_ = true;
+            search_task_available_ = true;
+            is_scanner_task_finished_ = true;
+            is_collector_task_finished_ = true;
+        }
+        start_work_cv_.notify_all(); /* Wake up all workers */
+
+        for (auto& t : scanner_threads_) {
+            if (t.joinable()) t.join();
+        }
+        for (auto& t : collector_threads_) {
+            if (t.joinable()) t.join();
+        }
+    }
 
     [[nodiscard]] auto num_vertices() const { return this->num_points_; }
 
@@ -209,7 +244,9 @@ inline QuantizedGraph::QuantizedGraph(size_t num, size_t max_deg, size_t dim)
     , w_collector_(4)
     , w_scanner_(4)
     , strip_(degree_bound_, w_scanner_, num_scanners_, w_collector_, num_collectors_)
-    , bucket_buffer_(w_collector_, w_scanner_, num_collectors_, num_scanners_, 0, 4) {
+    , bucket_buffer_(w_collector_, w_scanner_, num_collectors_, num_scanners_, 0, 4)
+    , scanner_threads_(num_scanners_)
+    , collector_threads_(num_collectors_) {
     initialize();
 }
 
@@ -290,7 +327,6 @@ inline void QuantizedGraph::search(
     /* Init query matrix */
     this->visited_.clear();
     this->search_pool_.clear();
-    this->is_search_finished_ = false;
     this->bucket_buffer_.clear();
     this->strip_.clear();
 
@@ -310,14 +346,14 @@ inline void QuantizedGraph::search(
     search_qg_parallel(query, knn, results);
 
 #if defined(DEBUG)
-    std::cout << "Scanner try_pop time:                     " << this->scanner_try_pop_time_ / this->num_scanned_ << " ns" << std::endl;
-    std::cout << "Scanner get_scanner_buffer time:          " << this->scanner_get_scanner_buffer_time_ / this->num_scanned_ << " ns" << std::endl;
-    std::cout << "Scanner l2_sqr time:                      " << this->scanner_l2_sqr_time_ / this->num_scanned_ << " ns" << std::endl;
-    std::cout << "Scanner scan_neighbors time:              " << this->scanner_scan_neighbors_time_ / this->num_scanned_ << " ns" << std::endl;
-    std::cout << "Scanner insert_results time:              " << this->scanner_insert_results_time_ / this->num_scanned_ << " ns" << std::endl;
-    std::cout << "Collector try_get_collector_buffer time:  " << this->collector_try_get_collector_buffer_time_ / this->num_collected_ << " ns" << std::endl;
-    std::cout << "Collector insert time:                    " << this->collector_insert_time_ / this->num_collected_ << " ns" << std::endl;
-    std::cout << "Collector try_promote time:               " << this->collector_try_promote_time_ / this->num_collected_ << " ns" << std::endl;
+    std::cout << "[scanner] try_pop time:                     " << this->scanner_try_pop_time_ / this->num_scanned_ << " ns" << std::endl;
+    std::cout << "[scanner] get_scanner_buffer time:          " << this->scanner_get_scanner_buffer_time_ / this->num_scanned_ << " ns" << std::endl;
+    std::cout << "[scanner] l2_sqr time:                      " << this->scanner_l2_sqr_time_ / this->num_scanned_ << " ns" << std::endl;
+    std::cout << "[scanner] scan_neighbors time:              " << this->scanner_scan_neighbors_time_ / this->num_scanned_ << " ns" << std::endl;
+    std::cout << "[scanner] insert_results time:              " << this->scanner_insert_results_time_ / this->num_scanned_ << " ns" << std::endl;
+    std::cout << "[collector] try_get_collector_buffer time:  " << this->collector_try_get_collector_buffer_time_ / this->num_collected_ << " ns" << std::endl;
+    std::cout << "[collector] insert time:                    " << this->collector_insert_time_ / this->num_collected_ << " ns" << std::endl;
+    std::cout << "[collector] try_promote time:               " << this->collector_try_promote_time_ / this->num_collected_ << " ns" << std::endl;
 #endif
 }
 
@@ -380,33 +416,45 @@ inline void QuantizedGraph::search_qg_parallel(
 #if defined(DEBUG)
     auto t2 = std::chrono::high_resolution_clock::now();
     std::stringstream ss;
-    ss << "buckets_prepare time: "
+    ss << "[master] buckets_prepare time: "
               << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()
               << " ns" << std::endl;
 #endif
-    /* spawn threads for scanners and collectors (sequence is important!) */
 #if defined(DEBUG)
     t1 = std::chrono::high_resolution_clock::now();
 #endif
-    std::vector<std::thread> threads;
-    for (size_t i = 0; i < num_scanners_; ++i) {
-        threads.emplace_back(&QuantizedGraph::scanner, this, i, q_obj);
+    /* Signal workers to start processing this new query */
+    {
+        std::lock_guard<std::mutex> lock(search_mutex_);
+        cur_query_ = &q_obj;
+        is_scanner_task_finished_ = false;
+        is_collector_task_finished_ = false;
+        is_search_finished_ = false;
+        search_task_available_ = true;
     }
-    for (size_t i = 0; i < num_collectors_; ++i) {
-        threads.emplace_back(&QuantizedGraph::collector, this, i);
-    }
+    start_work_cv_.notify_all();
 #if defined(DEBUG)
     t2 = std::chrono::high_resolution_clock::now();
-    ss << "spawning time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
-    // std::cout << ss.str();
+    ss << "[master] waking up workers time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+    std::cout << ss.str();
 #endif
-
-    for (auto& thread : threads) {
-        thread.join();
+#if defined(DEBUG)
+    t1 = std::chrono::high_resolution_clock::now();
+#endif
+    {
+        std::unique_lock<std::mutex> lock(search_mutex_);
+        work_finished_cv_.wait(lock, [this] {
+            return is_scanner_task_finished_ && is_collector_task_finished_;
+        });
+        cur_query_ = nullptr;
     }
-
     update_results(result_pool_, query);
     result_pool_.copy_results(results);
+#if defined(DEBUG)
+    t2 = std::chrono::high_resolution_clock::now();
+    ss << "[master] waiting for workers to finish time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+    std::cout << ss.str();
+#endif
 }
 
 /* fill buckets of all collectors */
@@ -460,7 +508,7 @@ inline void QuantizedGraph::buckets_prepare(
     delete[] appro_dist;
 }
 
-inline void QuantizedGraph::scanner(
+inline void QuantizedGraph::scanner_task(
     const size_t scanner_id,
     const QGQuery& q_obj
 ) {
@@ -492,9 +540,9 @@ inline void QuantizedGraph::scanner(
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
-        memory::mem_prefetch_l1(
-            reinterpret_cast<const char*>(cur_data), 20
-        );
+        // memory::mem_prefetch_l1(
+        //     reinterpret_cast<const char*>(cur_data), 20
+        // );
         float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
@@ -534,14 +582,13 @@ inline void QuantizedGraph::scanner(
         this->num_scanned_++;
 #endif
     }
-    is_search_finished_ = true;
-    // std::cout << "Scanner " << scanner_id << " finished\n";
+    is_search_finished_.store(true, std::memory_order_release);
 }
 
-inline void QuantizedGraph::collector(
+inline void QuantizedGraph::collector_task(
     const size_t collector_id
 ) {
-    while (!is_search_finished_) {
+    while (!is_search_finished_.load(std::memory_order_acquire)) {
 #if defined(DEBUG)
         auto t1 = std::chrono::high_resolution_clock::now();
 #endif
@@ -585,7 +632,51 @@ inline void QuantizedGraph::collector(
         this->num_collected_++;
 #endif
     }
-    // std::cout << "Collector " << collector_id << " finished\n";
+}
+
+void QuantizedGraph::scanner_loop(size_t scanner_id) {
+    while (true) {
+        const QGQuery* local_query = nullptr;
+        {
+            std::unique_lock<std::mutex> lock(search_mutex_);
+            start_work_cv_.wait(lock, [this] {
+                return search_task_available_.load(std::memory_order_acquire) || shutdown_workers_;
+            });
+            if (shutdown_workers_) {
+                return; /* Exit thread */
+            }
+            
+            local_query = cur_query_;
+        }
+
+        if (local_query) { /* Should always be true if not shutting down */
+            scanner_task(scanner_id, *local_query);
+            is_scanner_task_finished_ = true;
+            search_task_available_.store(false, std::memory_order_release);
+            work_finished_cv_.notify_one();
+        } else {
+            throw std::runtime_error("local_query is nullptr");
+        }
+    }
+}
+
+void QuantizedGraph::collector_loop(size_t collector_id) {
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lock(search_mutex_);
+            start_work_cv_.wait(lock, [this] {
+                return search_task_available_.load(std::memory_order_acquire) || shutdown_workers_;
+            });
+            if (shutdown_workers_) {
+                return; /* Exit thread */
+            }
+        }
+
+        collector_task(collector_id);
+        is_collector_task_finished_ = true;
+        search_task_available_.store(false, std::memory_order_release);
+        work_finished_cv_.notify_one();
+    }
 }
 
 // scan a data row (including data vec and quantization codes for its neighbors)
@@ -617,14 +708,6 @@ inline float QuantizedGraph::scan_neighbors(
     for (uint32_t i = 0; i < cur_degree; ++i) {
         PID cur_neighbor = ptr_nb[i];
         float tmp_dist = appro_dist[i];
-// #if defined(DEBUG)
-//         std::cout << "Neighbor ID " << cur_neighbor << '\n';
-//         std::cout << "Appro " << appro_dist[i] << '\t';
-//         float __gt_dist__ = l2_sqr(query, get_vector(cur_neighbor), dimension_);
-//         std::cout << "GT " << __gt_dist__ << '\t';
-//         std::cout << "Error " << (appro_dist[i] - __gt_dist__) / __gt_dist__ << '\t';
-//         std::cout << "sqr_y " << sqr_y << '\n';
-// #endif
         if (search_pool.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
             continue;
         }
@@ -679,6 +762,19 @@ inline void QuantizedGraph::initialize() {
         Array<float, std::vector<size_t>, memory::AlignedAllocator<float, 1 << 22, true>>(
             std::vector<size_t>{num_points_, row_offset_}
         );
+#if defined(DEBUG)
+    auto t1 = std::chrono::high_resolution_clock::now();
+#endif
+    for (size_t i = 0; i < num_scanners_; ++i) {
+        this->scanner_threads_[i] = std::thread(&QuantizedGraph::scanner_loop, this, i);
+    }
+    for (size_t i = 0; i < num_collectors_; ++i) {
+        this->collector_threads_[i] = std::thread(&QuantizedGraph::collector_loop, this, i);
+    }
+#if defined(DEBUG)
+    auto t2 = std::chrono::high_resolution_clock::now();
+    std::cout << "spawning threads time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+#endif
 }
 
 // find candidate neighbors for cur_id, exclude the vertex itself
