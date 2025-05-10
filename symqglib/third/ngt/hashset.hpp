@@ -31,8 +31,7 @@ class HashBasedBooleanSet {
    private:
     size_t table_size_ = 0;
     PID mask_ = 0;
-    std::vector<std::atomic<PID>, memory::AlignedAllocator<std::atomic<PID>>> table_;
-    mutable std::mutex mutex_;
+    std::vector<PID, memory::AlignedAllocator<PID>> table_;
     std::unordered_set<PID> stl_hash_;
 
     [[nodiscard]] auto hash1(const PID value) const { return value & mask_; }
@@ -40,6 +39,17 @@ class HashBasedBooleanSet {
    public:
     HashBasedBooleanSet() = default;
 
+    HashBasedBooleanSet(const HashBasedBooleanSet& other)
+        : table_size_(other.table_size_)
+        , mask_(other.mask_)
+        , table_(other.table_)
+        , stl_hash_(other.stl_hash_) {}
+
+    HashBasedBooleanSet(HashBasedBooleanSet&& other) noexcept
+        : table_size_(other.table_size_)
+        , mask_(other.mask_)
+        , table_(std::move(other.table_))
+        , stl_hash_(std::move(other.stl_hash_)) {}
     HashBasedBooleanSet& operator=(HashBasedBooleanSet&& other) noexcept {
         table_size_ = other.table_size_;
         mask_ = other.mask_;
@@ -68,7 +78,7 @@ class HashBasedBooleanSet {
             std::cerr << "[WARN] table size is not 2^N :  " << table_size << '\n';
         }
 
-        table_ = std::vector<std::atomic<PID>, memory::AlignedAllocator<std::atomic<PID>>>(table_size);
+        table_ = std::vector<PID, memory::AlignedAllocator<PID>>(table_size);
         std::fill(table_.begin(), table_.end(), kPidMax);
         stl_hash_.clear();
     }
@@ -83,26 +93,18 @@ class HashBasedBooleanSet {
         if (val == data_id) {
             return true;
         }
-        if (val == kPidMax) {
-            return false;
-        } else {
-            std::lock_guard<std::mutex> lock(mutex_);
-            return stl_hash_.find(data_id) != stl_hash_.end();
-        }
+        return (val != kPidMax && stl_hash_.find(data_id) != stl_hash_.end());
     }
 
     void set(PID data_id) {
-        PID expected = kPidMax;
-        PID desired = data_id;
-        if (table_[hash1(data_id)].compare_exchange_strong(expected, desired)) {
+        PID& val = table_[hash1(data_id)];
+        if (val == data_id) {
             return;
-        } else if (expected == data_id) {
-            return;
+        }
+        if (val == kPidMax) {
+            val = data_id;
         } else {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (stl_hash_.find(data_id) == stl_hash_.end()) {
-                stl_hash_.emplace(data_id);
-            }
+            stl_hash_.emplace(data_id);
         }
     }
 };
