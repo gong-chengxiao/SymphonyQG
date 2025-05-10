@@ -267,18 +267,18 @@ class Strip {
         for (size_t i = 0; i < this->w_scanner_ * this->num_scanners_; ++i) {
             this->state_[i] = StripState::COLLECTED;
         }
-        this->num_collecting_.store(0);
-        this->num_scanned_.store(0);
+        this->num_collecting_.store(0, std::memory_order_relaxed);
+        this->num_scanned_.store(0, std::memory_order_relaxed);
     }
 
     /* return if any strip is collecting */
     [[nodiscard]] bool is_collecting() const {
-        return this->num_collecting_.load() > 0;
+        return this->num_collecting_.load(std::memory_order_acquire) > 0;
     }
 
     /* return if any strip is scanned */
     [[nodiscard]] bool is_scanned() const {
-        return this->num_scanned_.load() > 0;
+        return this->num_scanned_.load(std::memory_order_acquire) > 0;
     }
 
     void set_scanned(size_t scanner_id) {
@@ -290,7 +290,7 @@ class Strip {
             StripState desired = StripState::SCANNED;
             
             if (this->state_[i].compare_exchange_strong(expected, desired)) {
-                this->num_scanned_.fetch_add(1);
+                this->num_scanned_.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
         }
@@ -307,7 +307,7 @@ class Strip {
             StripState desired = StripState::COLLECTED;
 
             if (this->state_[i].compare_exchange_strong(expected, desired)) {
-                this->num_collecting_.fetch_sub(1);
+                this->num_collecting_.fetch_sub(1, std::memory_order_relaxed);
                 return;
             }
         }
@@ -343,8 +343,8 @@ class Strip {
             StripState desired = StripState::COLLECTING;
 
             if (this->state_[i].compare_exchange_strong(expected, desired)) {
-                this->num_collecting_.fetch_add(1);
-                this->num_scanned_.fetch_sub(1);
+                this->num_collecting_.fetch_add(1, std::memory_order_relaxed);
+                this->num_scanned_.fetch_sub(1, std::memory_order_relaxed);
                 return std::make_pair(this->pids_[i], this->dist_ + i * this->w_);
             }
         }
