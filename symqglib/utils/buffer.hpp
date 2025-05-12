@@ -144,6 +144,15 @@ class BucketBuffer {
     }
 
     void insert(PID data_id, float dist) {
+        if (dist < this->bucket_.next_dist()) {
+            for (size_t i = this->h_buffer_; i > 0; --i) {
+                if (is_checked(this->buffer_[i - 1])) {
+                    this->buffer_[i - 1] = data_id;
+                    return;
+                }
+            }
+        }
+
         if (!this->bucket_.is_full(dist)) {
             this->bucket_.insert(data_id, dist);
         }
@@ -242,14 +251,14 @@ class Strip {
     [[nodiscard]] float* try_get_scanner_buffer(PID pid) {
         size_t new_scanner_pos = scanner_pos_ ^ 1;
 
-            StripState expected = StripState::COLLECTED;
-            const StripState desired = StripState::SCANNING;
+        StripState expected = StripState::COLLECTED;
+        const StripState desired = StripState::SCANNING;
 
-            if (this->data_.state_[new_scanner_pos].compare_exchange_strong(expected, desired)) {
-                this->data_.pids_[new_scanner_pos] = pid;
-                this->scanner_pos_ = new_scanner_pos;
-                return this->dist_ + (new_scanner_pos ? this->w_ : 0);
-            }
+        if (this->data_.state_[new_scanner_pos].compare_exchange_strong(expected, desired)) {
+            this->data_.pids_[new_scanner_pos] = pid;
+            this->scanner_pos_ = new_scanner_pos;
+            return this->dist_ + (new_scanner_pos ? this->w_ : 0);
+        }
 
         return nullptr;
     }
