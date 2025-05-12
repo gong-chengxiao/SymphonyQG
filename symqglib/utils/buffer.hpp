@@ -245,8 +245,8 @@ class Strip {
             const StripState desired = StripState::SCANNING;
 
             if (this->state_[new_scanner_pos].compare_exchange_strong(expected, desired)) {
-                this->scanner_pos_ = new_scanner_pos;
                 this->pids_[new_scanner_pos] = pid;
+                this->scanner_pos_ = new_scanner_pos;
                 return this->dist_ + (new_scanner_pos ? this->w_ : 0);
             }
         }

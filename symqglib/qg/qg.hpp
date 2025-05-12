@@ -57,8 +57,6 @@ class QuantizedGraph {
     FHTRotator rotator_;
     HashBasedBooleanSet visited_;
     buffer::SearchBuffer search_pool_;
-
-    std::mutex result_pool_mutex_;
     buffer::ResultBuffer result_pool_;
     
     std::atomic<bool> is_search_finished_;
@@ -354,6 +352,8 @@ inline void QuantizedGraph::search(
     std::cout << "[collector] try_get_collector_buffer time:  " << this->collector_try_get_collector_buffer_time_ / this->num_collected_ << " ns" << std::endl;
     std::cout << "[collector] insert time:                    " << this->collector_insert_time_ / this->num_collected_ << " ns" << std::endl;
     std::cout << "[collector] try_promote time:               " << this->collector_try_promote_time_ / this->num_collected_ << " ns" << std::endl;
+    std::cout << "[master] num_scanned:                      " << this->num_scanned_ << std::endl;
+    std::cout << "[master] num_collected:                    " << this->num_collected_ << std::endl;
 #endif
 }
 
@@ -491,10 +491,7 @@ inline void QuantizedGraph::buckets_prepare(
         }
         bucket_buffer_.insert(cur_neighbor, tmp_dist);
     }
-    {
-        std::lock_guard<std::mutex> lock(result_pool_mutex_);
-        result_pool_.insert(cur_node, sqr_y);
-    }
+    result_pool_.insert(cur_node, sqr_y);
     delete[] appro_dist;
 }
 
@@ -562,10 +559,7 @@ inline void QuantizedGraph::scanner_task(
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
-        {
-            std::lock_guard<std::mutex> lock(result_pool_mutex_);
-            result_pool_.insert(cur_node, sqr_y);
-        }
+        result_pool_.insert(cur_node, sqr_y);
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
         this->scanner_insert_results_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -582,7 +576,14 @@ inline void QuantizedGraph::collector_task() {
 #endif
         std::pair<PID, float*> pair = strip_.try_get_collector_buffer();
         if (pair.second == nullptr) {
+#if defined(DEBUG)
+            t1 = std::chrono::high_resolution_clock::now();
+#endif
             bucket_buffer_.try_promote();
+#if defined(DEBUG)
+            auto t2 = std::chrono::high_resolution_clock::now();
+            this->collector_try_promote_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+#endif
             continue;
         }
 #if defined(DEBUG)
