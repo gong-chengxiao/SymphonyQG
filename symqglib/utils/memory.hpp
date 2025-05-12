@@ -107,11 +107,27 @@ inline void mem_prefetch_l1(const char* ptr, size_t num_lines) {
     switch (num_lines) {
         default:
             [[fallthrough]];
-        case 20:
+        case 25:
             prefetch_l1(ptr);
             ptr += 64;
             [[fallthrough]];
-        case 19:
+        case 24:
+            prefetch_l1(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 23:
+            prefetch_l1(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 22:
+            prefetch_l1(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 21:
+            prefetch_l1(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 20:
             prefetch_l1(ptr);
             ptr += 64;
             [[fallthrough]];
