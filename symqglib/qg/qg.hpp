@@ -21,7 +21,7 @@
 #include "./qg_query.hpp"
 #include "./qg_scanner.hpp"
 
-#define DEBUG
+// #define DEBUG
 
 namespace symqg {
 /**
@@ -126,11 +126,11 @@ class QuantizedGraph {
 
     void buckets_prepare(const QGQuery& q_obj);
 
-    void scanner_task(const size_t scanner_id, const QGQuery& q_obj);
-    void collector_task(const size_t collector_id);
+    void scanner_task(const QGQuery& q_obj);
+    void collector_task();
 
-    void scanner_loop(const size_t scanner_id);
-    void collector_loop(const size_t collector_id);
+    void scanner_loop();
+    void collector_loop();
 
     [[nodiscard]] float* get_vector(PID data_id) {
         return &data_.at(row_offset_ * data_id);
@@ -243,8 +243,8 @@ inline QuantizedGraph::QuantizedGraph(size_t num, size_t max_deg, size_t dim)
     , num_scanners_(1)
     , w_collector_(4)
     , w_scanner_(4)
-    , strip_(degree_bound_, w_scanner_, num_scanners_, w_collector_, num_collectors_)
-    , bucket_buffer_(w_collector_, w_scanner_, num_collectors_, num_scanners_, 0, 4)
+    , strip_(degree_bound_)
+    , bucket_buffer_(0, 4)
     , scanner_threads_(num_scanners_)
     , collector_threads_(num_collectors_) {
     initialize();
@@ -461,55 +461,44 @@ inline void QuantizedGraph::search_qg_parallel(
 inline void QuantizedGraph::buckets_prepare(
     const QGQuery& q_obj
 ) {
-    size_t collector_id = 0;
     PID cur_node = this->entry_point_;
-    bool filled = false;
     float* appro_dist = new float[degree_bound_];
-    while (!filled) {
-        const float* cur_data = get_vector(cur_node);
+    const float* cur_data = get_vector(cur_node);
 
-        float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
+    float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
 
-        /* Compute approximate distance by Fast Scan */
-        const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
-        const auto* factor = &cur_data[factor_offset_];
-        this->scanner_.scan_neighbors(
-            appro_dist,
-            q_obj.lut().data(),
-            sqr_y,
-            q_obj.lower_val(),
-            q_obj.width(),
-            q_obj.sumq(),
-            packed_code,
-            factor
-        );
+    /* Compute approximate distance by Fast Scan */
+    const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
+    const auto* factor = &cur_data[factor_offset_];
+    this->scanner_.scan_neighbors(
+        appro_dist,
+        q_obj.lut().data(),
+        sqr_y,
+        q_obj.lower_val(),
+        q_obj.width(),
+        q_obj.sumq(),
+        packed_code,
+        factor
+    );
 
-        const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
+    const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
 
-        for (size_t j = 0; j < degree_bound_; ++j) {
-            PID cur_neighbor = ptr_nb[j];
-            float tmp_dist = appro_dist[j];
-            if (bucket_buffer_.is_full(collector_id, tmp_dist) || visited_.get(cur_neighbor)) {
-                continue;
-            }
-            bucket_buffer_.insert(collector_id, cur_neighbor, tmp_dist);
-            if (collector_id == num_collectors_ - 1) {
-                collector_id = 0;
-                filled = true;
-            } else {
-                ++collector_id;
-            }
+    for (size_t j = 0; j < degree_bound_; ++j) {
+        PID cur_neighbor = ptr_nb[j];
+        float tmp_dist = appro_dist[j];
+        if (bucket_buffer_.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
+            continue;
         }
-
-        result_pool_mutex_.lock();
+        bucket_buffer_.insert(cur_neighbor, tmp_dist);
+    }
+    {
+        std::lock_guard<std::mutex> lock(result_pool_mutex_);
         result_pool_.insert(cur_node, sqr_y);
-        result_pool_mutex_.unlock();
     }
     delete[] appro_dist;
 }
 
 inline void QuantizedGraph::scanner_task(
-    const size_t scanner_id,
     const QGQuery& q_obj
 ) {
     /* sequence is important! */
@@ -517,7 +506,7 @@ inline void QuantizedGraph::scanner_task(
 #if defined(DEBUG)
         auto t1 = std::chrono::high_resolution_clock::now();
 #endif
-        PID cur_node = bucket_buffer_.try_pop(scanner_id);
+        PID cur_node = bucket_buffer_.try_pop();
         if (cur_node == NOT_FOUND || visited_.get(cur_node)) {
             continue;
         }
@@ -531,7 +520,7 @@ inline void QuantizedGraph::scanner_task(
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
-        float* appro_dist = strip_.get_scanner_buffer(scanner_id, cur_node);
+        float* appro_dist = strip_.get_scanner_buffer(cur_node);
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
         this->scanner_get_scanner_buffer_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -565,7 +554,7 @@ inline void QuantizedGraph::scanner_task(
             factor
         );
 
-        strip_.set_scanned(scanner_id);
+        strip_.set_scanned();
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
         this->scanner_scan_neighbors_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -573,9 +562,10 @@ inline void QuantizedGraph::scanner_task(
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
-        result_pool_mutex_.lock();
-        result_pool_.insert(cur_node, sqr_y);
-        result_pool_mutex_.unlock();
+        {
+            std::lock_guard<std::mutex> lock(result_pool_mutex_);
+            result_pool_.insert(cur_node, sqr_y);
+        }
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
         this->scanner_insert_results_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -585,16 +575,14 @@ inline void QuantizedGraph::scanner_task(
     is_search_finished_.store(true, std::memory_order_release);
 }
 
-inline void QuantizedGraph::collector_task(
-    const size_t collector_id
-) {
+inline void QuantizedGraph::collector_task() {
     while (!is_search_finished_.load(std::memory_order_acquire)) {
 #if defined(DEBUG)
         auto t1 = std::chrono::high_resolution_clock::now();
 #endif
-        std::pair<PID, float*> pair = strip_.try_get_collector_buffer(collector_id);
+        std::pair<PID, float*> pair = strip_.try_get_collector_buffer();
         if (pair.second == nullptr) {
-            bucket_buffer_.try_promote(collector_id);
+            bucket_buffer_.try_promote();
             continue;
         }
 #if defined(DEBUG)
@@ -606,6 +594,9 @@ inline void QuantizedGraph::collector_task(
 #endif
         PID cur_node = pair.first;
         float* appro_dist = pair.second;
+        memory::mem_prefetch_l1(
+            reinterpret_cast<const char*>(appro_dist), 2
+        );
         float* cur_data = get_vector(cur_node);
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
 
@@ -615,9 +606,9 @@ inline void QuantizedGraph::collector_task(
                 continue;
             }
             float tmp_dist = appro_dist[i];
-            bucket_buffer_.insert(collector_id, cur_neighbor, tmp_dist);
+            bucket_buffer_.insert(cur_neighbor, tmp_dist);
         }
-        strip_.set_collected(collector_id);
+        strip_.set_collected();
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
         this->collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -625,7 +616,7 @@ inline void QuantizedGraph::collector_task(
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
-        bucket_buffer_.try_promote(collector_id);
+        bucket_buffer_.try_promote();
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
         this->collector_try_promote_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -634,7 +625,7 @@ inline void QuantizedGraph::collector_task(
     }
 }
 
-void QuantizedGraph::scanner_loop(size_t scanner_id) {
+void QuantizedGraph::scanner_loop() {
     while (true) {
         const QGQuery* local_query = nullptr;
         {
@@ -650,7 +641,7 @@ void QuantizedGraph::scanner_loop(size_t scanner_id) {
         }
 
         if (local_query) { /* Should always be true if not shutting down */
-            scanner_task(scanner_id, *local_query);
+            scanner_task(*local_query);
             is_scanner_task_finished_ = true;
             search_task_available_.store(false, std::memory_order_release);
             work_finished_cv_.notify_one();
@@ -660,7 +651,7 @@ void QuantizedGraph::scanner_loop(size_t scanner_id) {
     }
 }
 
-void QuantizedGraph::collector_loop(size_t collector_id) {
+void QuantizedGraph::collector_loop() {
     while (true) {
         {
             std::unique_lock<std::mutex> lock(search_mutex_);
@@ -672,7 +663,7 @@ void QuantizedGraph::collector_loop(size_t collector_id) {
             }
         }
 
-        collector_task(collector_id);
+        collector_task();
         is_collector_task_finished_ = true;
         search_task_available_.store(false, std::memory_order_release);
         work_finished_cv_.notify_one();
@@ -766,10 +757,10 @@ inline void QuantizedGraph::initialize() {
     auto t1 = std::chrono::high_resolution_clock::now();
 #endif
     for (size_t i = 0; i < num_scanners_; ++i) {
-        this->scanner_threads_[i] = std::thread(&QuantizedGraph::scanner_loop, this, i);
+        this->scanner_threads_[i] = std::thread(&QuantizedGraph::scanner_loop, this);
     }
     for (size_t i = 0; i < num_collectors_; ++i) {
-        this->collector_threads_[i] = std::thread(&QuantizedGraph::collector_loop, this, i);
+        this->collector_threads_[i] = std::thread(&QuantizedGraph::collector_loop, this);
     }
 #if defined(DEBUG)
     auto t2 = std::chrono::high_resolution_clock::now();
