@@ -286,11 +286,13 @@ inline void QuantizedGraph::search(
     // << scanner_.cpu_time_ / scanner_.wall_time_ << ","
     // << std::endl;
 
-    std::cout << "scanner pop time:             " << scanner_pop_time_ / scan_count_ << " ns" << '\n';
-    std::cout << "scanner l2_sqr time:          " << scanner_l2_sqr_time_ / scan_count_ << " ns" << '\n';
-    std::cout << "scanner scan time:            " << scanner_scan_time_ / scan_count_ << " ns" << '\n';
-    std::cout << "scanner insert result time:   " << scanner_insert_result_time_ / scan_count_ << " ns" << '\n';
-    std::cout << "collector insert time:        " << collector_insert_time_ / scan_count_ << " ns" << '\n';
+    std::cout << "[scanner] pop time:             " << scanner_pop_time_ / scan_count_ << " ns" << '\n';
+    std::cout << "[scanner] l2_sqr time:          " << scanner_l2_sqr_time_ / scan_count_ << " ns" << '\n';
+    std::cout << "[scanner] scan time:            " << scanner_scan_time_ / scan_count_ << " ns" << '\n';
+    std::cout << "[scanner] insert result time:   " << scanner_insert_result_time_ / scan_count_ << " ns" << '\n';
+    std::cout << "[collector] insert time:        " << collector_insert_time_ / scan_count_ << " ns" << '\n';
+    std::cout << "[master] num_scanned:            " << scan_count_ << '\n';
+    std::cout << "[master] num_collected:          " << scan_count_ << '\n';
 }
 
 /**
