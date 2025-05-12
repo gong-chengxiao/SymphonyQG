@@ -239,10 +239,9 @@ class Strip {
     }
 
     /* spin until get a buffer with COLLECTED state */
-    [[nodiscard]] float* get_scanner_buffer(PID pid) {
+    [[nodiscard]] float* try_get_scanner_buffer(PID pid) {
         size_t new_scanner_pos = scanner_pos_ ^ 1;
 
-        while (true) {
             StripState expected = StripState::COLLECTED;
             const StripState desired = StripState::SCANNING;
 
@@ -251,7 +250,8 @@ class Strip {
                 this->scanner_pos_ = new_scanner_pos;
                 return this->dist_ + (new_scanner_pos ? this->w_ : 0);
             }
-        }
+
+        return nullptr;
     }
 
     /* try getting a buffer with SCANNED state, return std::pari(1U << 31, nullptr) if fail */
