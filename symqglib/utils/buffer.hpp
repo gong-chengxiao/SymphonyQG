@@ -86,8 +86,8 @@ class SearchBuffer {
 
 class BucketBuffer {
    private:
-    size_t h_bucket_;           /* height of bucket */
-    size_t h_buffer_;            /* height of buffer */
+    size_t h_bucket_;   /* height of bucket */
+    size_t h_buffer_;   /* height of buffer */
     SearchBuffer bucket_;
     std::vector<PID> buffer_;
 
@@ -160,6 +160,14 @@ class BucketBuffer {
 };
 
 class Strip {
+   public:
+    enum StripState {
+        COLLECTED,
+        SCANNING,
+        SCANNED,
+        COLLECTING
+    };
+
    private:
     float* dist_;
     size_t w_;          /* mininal operation width ( == max_degree) */
@@ -167,15 +175,11 @@ class Strip {
     size_t length_;
     size_t collector_pos_;
     size_t scanner_pos_;
-    
-    enum StripState {
-        COLLECTED,
-        SCANNING,
-        SCANNED,
-        COLLECTING
-    };
-    std::vector<std::atomic<StripState>> state_;
-    std::vector<PID> pids_;
+
+    struct alignas(64) ArrayData {
+        std::array<std::atomic<StripState>, 2> state_;
+        std::array<PID, 2> pids_;
+    } data_;
 
    public:
     Strip() = default;
@@ -185,12 +189,10 @@ class Strip {
         size_(w_ << 1),
         length_(2),
         collector_pos_(0),
-        scanner_pos_(0),
-        state_(2),
-        pids_(2) {
+        scanner_pos_(0) {
             dist_ = new float[size_];
             for (size_t i = 0; i < length_; ++i) {
-                this->state_[i] = StripState::COLLECTED;
+                this->data_.state_[i] = StripState::COLLECTED;
             }
         }
     
@@ -200,25 +202,25 @@ class Strip {
 
     void clear() {
         for (size_t i = 0; i < length_; ++i) {
-            this->state_[i] = StripState::COLLECTED;
+            this->data_.state_[i] = StripState::COLLECTED;
         }
     }
 
     /* return if any strip is collecting */
     [[nodiscard]] bool is_collecting() const {
-        return this->state_[collector_pos_] == StripState::COLLECTING;
+        return this->data_.state_[collector_pos_] == StripState::COLLECTING;
     }
 
     /* return if any strip is scanned */
     [[nodiscard]] bool is_scanned() const {
-        return this->state_[scanner_pos_] == StripState::SCANNED;
+        return this->data_.state_[scanner_pos_] == StripState::SCANNED;
     }
 
     void set_scanned() {
         StripState expected = StripState::SCANNING;
         const StripState desired = StripState::SCANNED;
         
-        if (this->state_[scanner_pos_].compare_exchange_strong(expected, desired)) {
+        if (this->data_.state_[scanner_pos_].compare_exchange_strong(expected, desired)) {
             return;
         }
 
@@ -229,7 +231,7 @@ class Strip {
         StripState expected = StripState::COLLECTING;
         const StripState desired = StripState::COLLECTED;
 
-        if (this->state_[collector_pos_].compare_exchange_strong(expected, desired)) {
+        if (this->data_.state_[collector_pos_].compare_exchange_strong(expected, desired)) {
             return;
         }
 
@@ -244,8 +246,8 @@ class Strip {
             StripState expected = StripState::COLLECTED;
             const StripState desired = StripState::SCANNING;
 
-            if (this->state_[new_scanner_pos].compare_exchange_strong(expected, desired)) {
-                this->pids_[new_scanner_pos] = pid;
+            if (this->data_.state_[new_scanner_pos].compare_exchange_strong(expected, desired)) {
+                this->data_.pids_[new_scanner_pos] = pid;
                 this->scanner_pos_ = new_scanner_pos;
                 return this->dist_ + (new_scanner_pos ? this->w_ : 0);
             }
@@ -259,9 +261,9 @@ class Strip {
         StripState expected = StripState::SCANNED;
         const StripState desired = StripState::COLLECTING;
 
-        if (this->state_[new_collector_pos].compare_exchange_strong(expected, desired)) {
+        if (this->data_.state_[new_collector_pos].compare_exchange_strong(expected, desired)) {
             this->collector_pos_ = new_collector_pos;
-            return std::make_pair(this->pids_[new_collector_pos], this->dist_ + (new_collector_pos ? this->w_ : 0));
+            return std::make_pair(this->data_.pids_[new_collector_pos], this->dist_ + (new_collector_pos ? this->w_ : 0));
         }
 
         return std::make_pair(NOT_FOUND, nullptr);
