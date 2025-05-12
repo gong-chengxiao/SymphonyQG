@@ -144,18 +144,15 @@ class BucketBuffer {
     }
 
     void insert(PID data_id, float dist) {
-        if (dist < this->bucket_.next_dist()) {
-            for (size_t i = this->h_buffer_; i > 0; --i) {
-                if (is_checked(this->buffer_[i - 1])) {
-                    this->buffer_[i - 1] = data_id;
-                    return;
-                }
-            }
-        }
-
-        if (!this->bucket_.is_full(dist)) {
-            this->bucket_.insert(data_id, dist);
-        }
+        // if (dist < this->bucket_.next_dist()) {
+        //     for (size_t i = this->h_buffer_; i > 0; --i) {
+        //         if (is_checked(this->buffer_[i - 1])) {
+        //             this->buffer_[i - 1] = data_id;
+        //             return;
+        //         }
+        //     }
+        // }
+        this->bucket_.insert(data_id, dist);
     }
 
     void try_promote() {
@@ -217,34 +214,20 @@ class Strip {
 
     /* return if any strip is collecting */
     [[nodiscard]] bool is_collecting() const {
-        return this->data_.state_[collector_pos_] == StripState::COLLECTING;
+        return this->data_.state_[collector_pos_].load(std::memory_order_acquire) == StripState::COLLECTING;
     }
 
     /* return if any strip is scanned */
     [[nodiscard]] bool is_scanned() const {
-        return this->data_.state_[scanner_pos_] == StripState::SCANNED;
+        return this->data_.state_[scanner_pos_].load(std::memory_order_acquire) == StripState::SCANNED;
     }
 
     void set_scanned() {
-        StripState expected = StripState::SCANNING;
-        const StripState desired = StripState::SCANNED;
-        
-        if (this->data_.state_[scanner_pos_].compare_exchange_strong(expected, desired)) {
-            return;
-        }
-
-        throw std::runtime_error("no SCANNING state found");
+        this->data_.state_[scanner_pos_].store(StripState::SCANNED, std::memory_order_release);
     }
 
     void set_collected() {
-        StripState expected = StripState::COLLECTING;
-        const StripState desired = StripState::COLLECTED;
-
-        if (this->data_.state_[collector_pos_].compare_exchange_strong(expected, desired)) {
-            return;
-        }
-
-        throw std::runtime_error("no COLLECTING state found");
+        this->data_.state_[collector_pos_].store(StripState::COLLECTED, std::memory_order_release);
     }
 
     /* spin until get a buffer with COLLECTED state */
