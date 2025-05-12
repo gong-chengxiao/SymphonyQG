@@ -99,14 +99,17 @@ class QuantizedGraph {
     std::atomic<size_t> num_collected_;
 
     std::atomic<size_t> scanner_try_pop_time_, 
-                        scanner_get_scanner_buffer_time_, 
+                        scanner_try_get_scanner_buffer_time_, 
                         scanner_l2_sqr_time_, 
                         scanner_scan_neighbors_time_,
-                        scanner_insert_results_time_;
+                        scanner_insert_results_time_,
+                        scanner_num_retry_get_scanner_buffer_,
+                        scanner_num_retry_pop_;
 
     std::atomic<size_t> collector_try_get_collector_buffer_time_,
                         collector_insert_time_,
-                        collector_try_promote_time_;
+                        collector_try_promote_time_,
+                        collector_num_retry_get_collector_buffer_;
 #endif
 
     void initialize();
@@ -332,7 +335,7 @@ inline void QuantizedGraph::search(
     this->num_scanned_ = 0;
     this->num_collected_ = 0;
     this->scanner_try_pop_time_ = 0;
-    this->scanner_get_scanner_buffer_time_ = 0;
+    this->scanner_try_get_scanner_buffer_time_ = 0;
     this->scanner_l2_sqr_time_ = 0;
     this->scanner_scan_neighbors_time_ = 0;
     this->scanner_insert_results_time_ = 0;
@@ -345,15 +348,18 @@ inline void QuantizedGraph::search(
 
 #if defined(DEBUG)
     std::cout << "[scanner] try_pop time:                     " << this->scanner_try_pop_time_ / this->num_scanned_ << " ns" << std::endl;
-    std::cout << "[scanner] get_scanner_buffer time:          " << this->scanner_get_scanner_buffer_time_ / this->num_scanned_ << " ns" << std::endl;
+    std::cout << "[scanner] get_scanner_buffer time:          " << this->scanner_try_get_scanner_buffer_time_ / this->num_scanned_ << " ns" << std::endl;
     std::cout << "[scanner] l2_sqr time:                      " << this->scanner_l2_sqr_time_ / this->num_scanned_ << " ns" << std::endl;
     std::cout << "[scanner] scan_neighbors time:              " << this->scanner_scan_neighbors_time_ / this->num_scanned_ << " ns" << std::endl;
     std::cout << "[scanner] insert_results time:              " << this->scanner_insert_results_time_ / this->num_scanned_ << " ns" << std::endl;
+    std::cout << "[scanner] num_retry_get_scanner_buffer:     " << this->scanner_num_retry_get_scanner_buffer_ << std::endl;
+    std::cout << "[scanner] num_retry_pop:                    " << this->scanner_num_retry_pop_ << std::endl;
     std::cout << "[collector] try_get_collector_buffer time:  " << this->collector_try_get_collector_buffer_time_ / this->num_collected_ << " ns" << std::endl;
     std::cout << "[collector] insert time:                    " << this->collector_insert_time_ / this->num_collected_ << " ns" << std::endl;
     std::cout << "[collector] try_promote time:               " << this->collector_try_promote_time_ / this->num_collected_ << " ns" << std::endl;
-    std::cout << "[master] num_scanned:                      " << this->num_scanned_ << std::endl;
-    std::cout << "[master] num_collected:                    " << this->num_collected_ << std::endl;
+    std::cout << "[collector] num_retry_get_collector_buffer: " << this->collector_num_retry_get_collector_buffer_ << std::endl;
+    std::cout << "[master] num_scanned:                       " << this->num_scanned_ << std::endl;
+    std::cout << "[master] num_collected:                     " << this->num_collected_ << std::endl;
 #endif
 }
 
@@ -504,7 +510,12 @@ inline void QuantizedGraph::scanner_task(
         auto t1 = std::chrono::high_resolution_clock::now();
 #endif
         PID cur_node = bucket_buffer_.try_pop();
-        if (cur_node == NOT_FOUND || visited_.get(cur_node)) {
+        if (cur_node == NOT_FOUND) {
+#if defined(DEBUG)
+            this->scanner_num_retry_pop_++;
+#endif
+            continue;
+        } else if (visited_.get(cur_node)) {
             continue;
         }
         visited_.set(cur_node);
@@ -517,10 +528,15 @@ inline void QuantizedGraph::scanner_task(
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
-        float* appro_dist = strip_.get_scanner_buffer(cur_node);
+        float* appro_dist;
+        while ((appro_dist = strip_.try_get_scanner_buffer(cur_node)) == nullptr) {
+#if defined(DEBUG)
+            this->scanner_num_retry_get_scanner_buffer_++;
+#endif
+        }
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
-        this->scanner_get_scanner_buffer_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+        this->scanner_try_get_scanner_buffer_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #endif
 
 #if defined(DEBUG)
@@ -583,6 +599,7 @@ inline void QuantizedGraph::collector_task() {
 #if defined(DEBUG)
             auto t2 = std::chrono::high_resolution_clock::now();
             this->collector_try_promote_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+            this->collector_num_retry_get_collector_buffer_++;
 #endif
             continue;
         }
