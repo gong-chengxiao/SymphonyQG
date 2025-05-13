@@ -103,6 +103,15 @@ static inline void prefetch_l2(const void* addr) {
 #endif
 }
 
+static inline void prefetch_l3(const void* addr) {
+#if defined(__SSE2__)
+    _mm_prefetch((const char*)addr, _MM_HINT_T2);
+#else
+    __builtin_prefetch(addr, 0, 3);
+#endif
+}
+
+
 inline void mem_prefetch_l1(const char* ptr, size_t num_lines) {
     switch (num_lines) {
         default:
@@ -296,4 +305,95 @@ inline void mem_prefetch_l2(const char* ptr, size_t num_lines) {
             break;
     }
 }
+
+inline void mem_prefetch_l3(const char* ptr, size_t num_lines) {
+    switch (num_lines) {
+        default:
+            [[fallthrough]];
+        case 20:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 19:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 18:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 17:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 16:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 15:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 14:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 13:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 12:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 11:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 10:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 9:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 8:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 7:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 6:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 5:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 4:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 3:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 2:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 1:
+            prefetch_l3(ptr);
+            ptr += 64;
+            [[fallthrough]];
+        case 0:
+            break;
+    }
+}
+
+
 }  // namespace symqg::memory
