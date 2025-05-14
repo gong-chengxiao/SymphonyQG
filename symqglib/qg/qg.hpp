@@ -49,6 +49,7 @@ class QuantizedGraph {
     mutable uint64_t scan_count_;
     mutable uint64_t scanner_pop_time_, scanner_scan_time_, scanner_l2_sqr_time_, scanner_insert_result_time_;
     mutable uint64_t collector_insert_time_;
+    mutable uint64_t num_collector_try_insert_, num_collector_insert_;
 
     mutable uint64_t num_is_in_head_;
 
@@ -269,6 +270,8 @@ inline void QuantizedGraph::search(
     scanner_pop_time_ = 0;
     scanner_insert_result_time_ = 0;
     collector_insert_time_ = 0;
+    num_collector_try_insert_ = 0;
+    num_collector_insert_ = 0;
 
     search_qg(query, knn, results);
     // print time as a table
@@ -291,8 +294,10 @@ inline void QuantizedGraph::search(
     std::cout << "[scanner] scan time:            " << scanner_scan_time_ / scan_count_ << " ns" << '\n';
     std::cout << "[scanner] insert result time:   " << scanner_insert_result_time_ / scan_count_ << " ns" << '\n';
     std::cout << "[collector] insert time:        " << collector_insert_time_ / scan_count_ << " ns" << '\n';
-    std::cout << "[master] num_scanned:            " << scan_count_ << '\n';
-    std::cout << "[master] num_collected:          " << scan_count_ << '\n';
+    std::cout << "[collector] num try insert:     " << num_collector_try_insert_ << '\n';
+    std::cout << "[collector] num insert:         " << num_collector_insert_ << '\n';
+    std::cout << "[master] num_scanned:           " << scan_count_ << '\n';
+    std::cout << "[master] num_collected:         " << scan_count_ << '\n';
 }
 
 /**
@@ -389,11 +394,13 @@ inline void QuantizedGraph::search_qg(
         // uint64_t is_in_head = 0;
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
         for (uint32_t i = 0; i < degree_bound_; ++i) {
+            num_collector_try_insert_++;
             PID cur_neighbor = ptr_nb[i];
             float tmp_dist = appro_dist[i];
             if (search_pool_.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
                 continue;
             }
+            num_collector_insert_++;
             search_pool_.insert(cur_neighbor, tmp_dist);
             // is_in_head |= search_pool_.insert(cur_neighbor, tmp_dist);
             memory::mem_prefetch_l2(
