@@ -41,9 +41,19 @@ class SearchBuffer {
 
     // insert a data point into buffer
     void insert(PID data_id, float dist) {
+        auto t1 = std::chrono::high_resolution_clock::now();
         size_t lo = binary_search(dist);
+        auto t2 = std::chrono::high_resolution_clock::now();
+        std::stringstream ss;
+        ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns, ";
+        t1 = std::chrono::high_resolution_clock::now();
         std::memmove(&data_[lo + 1], &data_[lo], (size_ - lo) * sizeof(Candidate<float>));
+        t2 = std::chrono::high_resolution_clock::now();
+        ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns, ";
+        t1 = std::chrono::high_resolution_clock::now();
         data_[lo] = Candidate<float>(data_id, dist);
+        t2 = std::chrono::high_resolution_clock::now();
+        ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns, ";
         size_ += static_cast<size_t>(size_ < capacity_);
         cur_ = lo < cur_ ? lo : cur_;
     }
