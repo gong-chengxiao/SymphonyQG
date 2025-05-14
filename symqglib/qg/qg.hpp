@@ -288,7 +288,7 @@ inline void QuantizedGraph::search(
     // << scanner_.wall_time_ / scanner_.scan_count_ << ","
     // << scanner_.cpu_time_ / scanner_.wall_time_ << ","
     // << std::endl;
-
+#if defined(DEBUG)
     std::cout << "[scanner] pop time:             " << scanner_pop_time_ / scan_count_ << " ns" << '\n';
     std::cout << "[scanner] l2_sqr time:          " << scanner_l2_sqr_time_ / scan_count_ << " ns" << '\n';
     std::cout << "[scanner] scan time:            " << scanner_scan_time_ / scan_count_ << " ns" << '\n';
@@ -298,6 +298,7 @@ inline void QuantizedGraph::search(
     std::cout << "[collector] num insert:         " << num_collector_insert_ << '\n';
     std::cout << "[master] num_scanned:           " << scan_count_ << '\n';
     std::cout << "[master] num_collected:         " << scan_count_ << '\n';
+#endif
 }
 
 /**
