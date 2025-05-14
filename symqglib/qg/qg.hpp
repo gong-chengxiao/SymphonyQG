@@ -21,7 +21,7 @@
 #include "./qg_query.hpp"
 #include "./qg_scanner.hpp"
 
-#define DEBUG
+// #define DEBUG
 
 namespace symqg {
 /**
@@ -601,20 +601,15 @@ inline void QuantizedGraph::collector_task() {
         t2 = std::chrono::high_resolution_clock::now();
         this->collector_try_get_collector_buffer_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #endif
-#if defined(DEBUG)
-        t1 = std::chrono::high_resolution_clock::now();
-#endif
-        float* appro_dist = new float[degree_bound_];
-        std::memcpy(appro_dist, pair.second, degree_bound_ * sizeof(float));
+
+        float* appro_dist = pair.second;
         PID cur_node = pair.first;
-        strip_.set_collected();
 
         float* cur_data = get_vector(cur_node);
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
-        memory::mem_prefetch_l1(
-            reinterpret_cast<const char*>(appro_dist), 2
-        );
-
+#if defined(DEBUG)
+        t1 = std::chrono::high_resolution_clock::now();
+#endif
         for (uint32_t i = 0; i < degree_bound_; ++i) {
 #if defined(DEBUG)
             this->num_collector_try_insert_++;
@@ -624,15 +619,15 @@ inline void QuantizedGraph::collector_task() {
                 continue;
             }
 #if defined(DEBUG)
-            this->num_collector_insert_ += static_cast<size_t>(bucket_buffer_.is_full(appro_dist[i]));
+            this->num_collector_insert_ ++;
 #endif
             bucket_buffer_.insert(cur_neighbor, appro_dist[i]);
         }
-        delete[] appro_dist;
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
         this->collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #endif
+        strip_.set_collected();
 #if defined(DEBUG)
         this->num_collected_++;
 #endif
