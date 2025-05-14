@@ -402,7 +402,10 @@ inline void QuantizedGraph::search_qg(
                 continue;
             }
             num_collector_insert_++;
+            auto t1 = std::chrono::high_resolution_clock::now();
             search_pool_.insert(cur_neighbor, tmp_dist);
+            auto t2 = std::chrono::high_resolution_clock::now();
+            std::cout << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
             // is_in_head |= search_pool_.insert(cur_neighbor, tmp_dist);
             memory::mem_prefetch_l2(
                 reinterpret_cast<const char*>(get_vector(search_pool_.next_id())), 10
