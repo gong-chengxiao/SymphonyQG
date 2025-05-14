@@ -56,6 +56,7 @@ class SearchBuffer {
         ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns, ";
         size_ += static_cast<size_t>(size_ < capacity_);
         cur_ = lo < cur_ ? lo : cur_;
+        std::cout << ss.str() << std::endl;
     }
 
     [[nodiscard]] auto is_full(float dist) const -> bool {
