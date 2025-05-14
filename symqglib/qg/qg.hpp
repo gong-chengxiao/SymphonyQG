@@ -21,7 +21,7 @@
 #include "./qg_query.hpp"
 #include "./qg_scanner.hpp"
 
-#define DEBUG
+// #define DEBUG
 
 namespace symqg {
 /**
@@ -594,7 +594,6 @@ inline void QuantizedGraph::collector_task() {
 #if defined(DEBUG)
         auto t1 = std::chrono::high_resolution_clock::now();
 #endif
-        bucket_buffer_.try_promote();
 #if defined(DEBUG)
         auto t2 = std::chrono::high_resolution_clock::now();
         this->collector_try_promote_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -605,6 +604,7 @@ inline void QuantizedGraph::collector_task() {
 #endif
         std::pair<PID*, float*> pair = strip_.try_get_collector_buffer();
         if (pair.second == nullptr) {
+            bucket_buffer_.try_promote();
             continue;
         }
 #if defined(DEBUG)
@@ -624,6 +624,9 @@ inline void QuantizedGraph::collector_task() {
             float* cur_data = get_vector(cur_node);
             const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
             for (uint32_t j = 0; j < degree_bound_; ++j) {
+                if (!(++num_insert & throhold_mask)) {
+                    bucket_buffer_.try_promote();
+                }
 #if defined(DEBUG)
                 this->num_collector_try_insert_++;
 #endif
@@ -636,9 +639,6 @@ inline void QuantizedGraph::collector_task() {
                 this->num_collector_insert_++;
 #endif
                 bucket_buffer_.insert(cur_neighbor, tmp_dist);
-                if (!(++num_insert & throhold_mask)) {
-                    bucket_buffer_.try_promote();
-                }
             }
 #if defined(DEBUG)
             t2 = std::chrono::high_resolution_clock::now();
