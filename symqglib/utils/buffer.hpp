@@ -189,23 +189,25 @@ class Strip {
    private:
     float* dist_;
     size_t w_;          /* mininal operation width ( == max_degree) */
-    size_t size_;
     size_t length_;
+    size_t h_;
+    size_t size_;       /* size of dist_ == w_ * length_ * h_ */
     size_t collector_pos_;
     size_t scanner_pos_;
 
     struct alignas(64) ArrayData {
         std::array<std::atomic<StripState>, 2> state_;
-        std::array<PID, 2> pids_;
+        std::array<PID, 4> pids_;   /* TODO: Hard code for now */
     } data_;
 
    public:
     Strip() = default;
 
-    explicit Strip(size_t w_)
+    explicit Strip(size_t w_, size_t h_)
         : w_(w_), 
-        size_(w_ << 1),
         length_(2),
+        h_(h_),
+        size_(w_ * length_ * h_),
         collector_pos_(0),
         scanner_pos_(0) {
             dist_ = new float[size_];
@@ -219,6 +221,8 @@ class Strip {
     }
 
     void clear() {
+        this->collector_pos_ = 0;
+        this->scanner_pos_ = 0;
         for (size_t i = 0; i < length_; ++i) {
             this->data_.state_[i] = StripState::COLLECTED;
         }
@@ -234,7 +238,8 @@ class Strip {
         return this->data_.state_[scanner_pos_].load(std::memory_order_acquire) == StripState::SCANNED;
     }
 
-    void set_scanned() {
+    void set_scanned(PID* pid) {
+        std::memcpy(this->data_.pids_.data() + scanner_pos_ * this->h_, pid, this->h_ * sizeof(PID));
         this->data_.state_[scanner_pos_].store(StripState::SCANNED, std::memory_order_release);
     }
 
@@ -243,23 +248,22 @@ class Strip {
     }
 
     /* spin until get a buffer with COLLECTED state */
-    [[nodiscard]] float* try_get_scanner_buffer(PID pid) {
+    [[nodiscard]] float* try_get_scanner_buffer() {
         size_t new_scanner_pos = scanner_pos_ ^ 1;
 
         StripState expected = StripState::COLLECTED;
         const StripState desired = StripState::SCANNING;
 
         if (this->data_.state_[new_scanner_pos].compare_exchange_strong(expected, desired)) {
-            this->data_.pids_[new_scanner_pos] = pid;
             this->scanner_pos_ = new_scanner_pos;
-            return this->dist_ + (new_scanner_pos ? this->w_ : 0);
+            return this->dist_ + new_scanner_pos * this->w_ * this->h_;
         }
 
         return nullptr;
     }
 
     /* try getting a buffer with SCANNED state, return std::pari(1U << 31, nullptr) if fail */
-    [[nodiscard]] std::pair<PID, float*> try_get_collector_buffer() {
+    [[nodiscard]] std::pair<PID*, float*> try_get_collector_buffer() {
         size_t new_collector_pos = collector_pos_ ^ 1;
 
         StripState expected = StripState::SCANNED;
@@ -267,10 +271,10 @@ class Strip {
 
         if (this->data_.state_[new_collector_pos].compare_exchange_strong(expected, desired)) {
             this->collector_pos_ = new_collector_pos;
-            return std::make_pair(this->data_.pids_[new_collector_pos], this->dist_ + (new_collector_pos ? this->w_ : 0));
+            return std::make_pair(this->data_.pids_.data() + this->h_ * new_collector_pos, this->dist_ + new_collector_pos * this->w_ * this->h_);
         }
 
-        return std::make_pair(NOT_FOUND, nullptr);
+        return std::make_pair(nullptr, nullptr);
     }
 };
 

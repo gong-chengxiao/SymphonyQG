@@ -72,6 +72,7 @@ class QuantizedGraph {
     size_t neighbor_offset_ = 0;  // pos of Neighbors
     size_t row_offset_ = 0;       // length of entire row
 
+    size_t h_strip_ = 2;
     buffer::Strip strip_;
     buffer::BucketBuffer bucket_buffer_;
 
@@ -233,7 +234,7 @@ inline QuantizedGraph::QuantizedGraph(size_t num, size_t max_deg, size_t dim)
     , visited_(100)
     , search_pool_(0)
     , result_pool_(0)
-    , strip_(degree_bound_)
+    , strip_(degree_bound_, h_strip_)
     , bucket_buffer_(0, 2) {
     initialize();
 }
@@ -498,6 +499,10 @@ inline void QuantizedGraph::buckets_prepare(
 inline void QuantizedGraph::scanner_task(
     const QGQuery& q_obj
 ) {
+    std::vector<PID> scanner_buffer_pids(h_strip_);
+
+    size_t scanner_buffer_pos = 0;
+    float* cur_scanner_buffer = nullptr;
     /* sequence is important! */
     while (strip_.is_scanned() || strip_.is_collecting() || bucket_buffer_.has_next()) {
 #if defined(DEBUG)
@@ -513,6 +518,7 @@ inline void QuantizedGraph::scanner_task(
             continue;
         }
         visited_.set(cur_node);
+        scanner_buffer_pids[scanner_buffer_pos] = cur_node;
         const float* cur_data = get_vector(cur_node);
 #if defined(DEBUG)
         auto t2 = std::chrono::high_resolution_clock::now();
@@ -522,9 +528,6 @@ inline void QuantizedGraph::scanner_task(
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
-        memory::mem_prefetch_l1(
-            reinterpret_cast<const char*>(cur_data), 25
-        );
         float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
         const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
         const auto* factor = &cur_data[factor_offset_];
@@ -537,10 +540,15 @@ inline void QuantizedGraph::scanner_task(
         t1 = std::chrono::high_resolution_clock::now();
 #endif
         float* appro_dist;
-        while ((appro_dist = strip_.try_get_scanner_buffer(cur_node)) == nullptr) {
+        if (scanner_buffer_pos == 0) {
+            while ((appro_dist = strip_.try_get_scanner_buffer()) == nullptr) {
 #if defined(DEBUG)
-            this->scanner_num_retry_get_scanner_buffer_++;
+                this->scanner_num_retry_get_scanner_buffer_++;
 #endif
+            }
+            cur_scanner_buffer = appro_dist;
+        } else {
+            appro_dist = cur_scanner_buffer + scanner_buffer_pos * degree_bound_;
         }
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
@@ -560,8 +568,10 @@ inline void QuantizedGraph::scanner_task(
             packed_code,
             factor
         );
-
-        strip_.set_scanned();
+        if (++scanner_buffer_pos == h_strip_) {
+            strip_.set_scanned(scanner_buffer_pids.data());
+            scanner_buffer_pos = 0;
+        }
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
         this->scanner_scan_neighbors_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -593,7 +603,7 @@ inline void QuantizedGraph::collector_task() {
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
 #endif
-        std::pair<PID, float*> pair = strip_.try_get_collector_buffer();
+        std::pair<PID*, float*> pair = strip_.try_get_collector_buffer();
         if (pair.second == nullptr) {
             continue;
         }
@@ -601,37 +611,45 @@ inline void QuantizedGraph::collector_task() {
         t2 = std::chrono::high_resolution_clock::now();
         this->collector_try_get_collector_buffer_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #endif
-
-        float* appro_dist = pair.second;
-        PID cur_node = pair.first;
-
-        float* cur_data = get_vector(cur_node);
-        const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
+        size_t throhold_mask = 0xf;
+        size_t num_insert = 0;
+        float* appro_dist_start = pair.second;
+        PID* cur_node_ptr = pair.first;
+        for (size_t i = 0; i < h_strip_; ++i) {
 #if defined(DEBUG)
-        t1 = std::chrono::high_resolution_clock::now();
+            t1 = std::chrono::high_resolution_clock::now();
 #endif
-        for (uint32_t i = 0; i < degree_bound_; ++i) {
+            float* appro_dist = appro_dist_start + i * degree_bound_;
+            PID cur_node = cur_node_ptr[i];
+            float* cur_data = get_vector(cur_node);
+            const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
+            for (uint32_t j = 0; j < degree_bound_; ++j) {
 #if defined(DEBUG)
-            this->num_collector_try_insert_++;
+                this->num_collector_try_insert_++;
 #endif
-            PID cur_neighbor = ptr_nb[i];
-            float tmp_dist = appro_dist[i];
-            if (bucket_buffer_.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
-                continue;
+                PID cur_neighbor = ptr_nb[j];
+                float tmp_dist = appro_dist[j];
+                if (bucket_buffer_.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
+                    continue;
+                }
+#if defined(DEBUG)
+                this->num_collector_insert_++;
+#endif
+                bucket_buffer_.insert(cur_neighbor, tmp_dist);
+                if (!(++num_insert & throhold_mask)) {
+                    bucket_buffer_.try_promote();
+                }
             }
 #if defined(DEBUG)
-            this->num_collector_insert_++;
+            t2 = std::chrono::high_resolution_clock::now();
+            this->collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #endif
-            bucket_buffer_.insert(cur_neighbor, tmp_dist);
+
+#if defined(DEBUG)
+            this->num_collected_++;
+#endif
         }
-#if defined(DEBUG)
-        t2 = std::chrono::high_resolution_clock::now();
-        this->collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
-#endif
         strip_.set_collected();
-#if defined(DEBUG)
-        this->num_collected_++;
-#endif
     }
 }
 
