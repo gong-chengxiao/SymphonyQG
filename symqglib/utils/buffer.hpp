@@ -41,23 +41,23 @@ class SearchBuffer {
 
     // insert a data point into buffer
     void insert(PID data_id, float dist) {
-        auto t1 = std::chrono::high_resolution_clock::now();
+        // auto t1 = std::chrono::high_resolution_clock::now();
         size_t lo = binary_search(dist);
-        auto t2 = std::chrono::high_resolution_clock::now();
-        std::stringstream ss;
-        ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
-        t1 = std::chrono::high_resolution_clock::now();
+        // auto t2 = std::chrono::high_resolution_clock::now();
+        // std::stringstream ss;
+        // ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
+        // t1 = std::chrono::high_resolution_clock::now();
         std::memmove(&data_[lo + 1], &data_[lo], (size_ - lo) * sizeof(Candidate<float>));
-        t2 = std::chrono::high_resolution_clock::now();
-        ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()
-           << " ns\t" << lo << "\t" << size_ << "\t";
-        t1 = std::chrono::high_resolution_clock::now();
+        // t2 = std::chrono::high_resolution_clock::now();
+        // ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()
+        //    << " ns\t" << lo << "\t" << size_ << "\t";
+        // t1 = std::chrono::high_resolution_clock::now();
         data_[lo] = Candidate<float>(data_id, dist);
         size_ += static_cast<size_t>(size_ < capacity_);
         cur_ = lo < cur_ ? lo : cur_;
-        t2 = std::chrono::high_resolution_clock::now();
-        ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
-        std::cout << ss.str() << std::endl;
+        // t2 = std::chrono::high_resolution_clock::now();
+        // ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
+        // std::cout << ss.str() << std::endl;
     }
 
     [[nodiscard]] auto is_full(float dist) const -> bool {
@@ -164,7 +164,10 @@ class BucketBuffer {
         //         }
         //     }
         // }
+        auto t1 = std::chrono::high_resolution_clock::now();
         this->bucket_.insert(data_id, dist);
+        auto t2 = std::chrono::high_resolution_clock::now();
+        std::cout << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
     }
 
     void try_promote() {

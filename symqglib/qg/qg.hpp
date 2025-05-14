@@ -615,13 +615,14 @@ inline void QuantizedGraph::collector_task() {
             this->num_collector_try_insert_++;
 #endif
             PID cur_neighbor = ptr_nb[i];
-            if (bucket_buffer_.is_full(appro_dist[i]) || visited_.get(cur_neighbor)) {
+            float tmp_dist = appro_dist[i];
+            if (bucket_buffer_.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
                 continue;
             }
 #if defined(DEBUG)
-            this->num_collector_insert_ ++;
+            this->num_collector_insert_++;
 #endif
-            bucket_buffer_.insert(cur_neighbor, appro_dist[i]);
+            bucket_buffer_.insert(cur_neighbor, tmp_dist);
         }
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
