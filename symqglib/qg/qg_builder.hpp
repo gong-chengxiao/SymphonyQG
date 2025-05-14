@@ -57,12 +57,11 @@ class QGBuilder {
         , dist_func_{space::l2_sqr}
         , new_neighbors_(qg_.num_vertices())
         , pruned_neighbors_(qg_.num_vertices())
-        , visited_list_(num_threads_)
+        , visited_list_(
+              num_threads_,
+              HashBasedBooleanSet(std::min(ef_build_ * ef_build_, num_nodes_ / 10))
+          )
         , degrees_(qg_.num_vertices(), degree_bound_) {
-        for (size_t i = 0; i < num_threads_; ++i) {
-            visited_list_[i] = HashBasedBooleanSet(std::min(ef_build_ * ef_build_, num_nodes_ / 10));
-        }
-
         omp_set_num_threads(static_cast<int>(num_threads_));
 
         std::vector<float> centroid =
