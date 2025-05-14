@@ -21,7 +21,7 @@
 #include "./qg_query.hpp"
 #include "./qg_scanner.hpp"
 
-// #define DEBUG
+#define DEBUG
 
 namespace symqg {
 /**

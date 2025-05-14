@@ -164,10 +164,7 @@ class BucketBuffer {
         //         }
         //     }
         // }
-        auto t1 = std::chrono::high_resolution_clock::now();
         this->bucket_.insert(data_id, dist);
-        auto t2 = std::chrono::high_resolution_clock::now();
-        std::cout << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
     }
 
     void try_promote() {
