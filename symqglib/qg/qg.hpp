@@ -22,6 +22,8 @@
 #include "./qg_query.hpp"
 #include "./qg_scanner.hpp"
 
+#define DEBUG
+
 namespace symqg {
 /**
  * @brief this Factor only for illustration, the true storage is continous
@@ -343,13 +345,13 @@ inline void QuantizedGraph::search_qg(
         // timespec u1, u2;
         // int64_t cpu_time = 0;
         // uint64_t wall_time;
-        scan_count_++;
 
         auto t1 = std::chrono::high_resolution_clock::now();
         PID cur_node = search_pool_.pop();
         if (visited_.get(cur_node)) {
             continue;
         }
+        scan_count_++;
         visited_.set(cur_node);
         const float* cur_data = get_vector(cur_node);
         auto t2 = std::chrono::high_resolution_clock::now();
@@ -402,10 +404,7 @@ inline void QuantizedGraph::search_qg(
                 continue;
             }
             num_collector_insert_++;
-            auto t1 = std::chrono::high_resolution_clock::now();
             search_pool_.insert(cur_neighbor, tmp_dist);
-            auto t2 = std::chrono::high_resolution_clock::now();
-            std::cout << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
             // is_in_head |= search_pool_.insert(cur_neighbor, tmp_dist);
             memory::mem_prefetch_l2(
                 reinterpret_cast<const char*>(get_vector(search_pool_.next_id())), 10
@@ -477,14 +476,6 @@ inline float QuantizedGraph::scan_neighbors(
     for (uint32_t i = 0; i < cur_degree; ++i) {
         PID cur_neighbor = ptr_nb[i];
         float tmp_dist = appro_dist[i];
-#if defined(DEBUG)
-        std::cout << "Neighbor ID " << cur_neighbor << '\n';
-        std::cout << "Appro " << appro_dist[i] << '\t';
-        float __gt_dist__ = l2_sqr(query, get_vector(cur_neighbor), dimension_);
-        std::cout << "GT " << __gt_dist__ << '\t';
-        std::cout << "Error " << (appro_dist[i] - __gt_dist__) / __gt_dist__ << '\t';
-        std::cout << "sqr_y " << sqr_y << '\n';
-#endif
         if (search_pool.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
             continue;
         }
