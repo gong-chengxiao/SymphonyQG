@@ -41,23 +41,11 @@ class SearchBuffer {
 
     // insert a data point into buffer
     void insert(PID data_id, float dist) {
-        // auto t1 = std::chrono::high_resolution_clock::now();
         size_t lo = binary_search(dist);
-        // auto t2 = std::chrono::high_resolution_clock::now();
-        // std::stringstream ss;
-        // ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
-        // t1 = std::chrono::high_resolution_clock::now();
         std::memmove(&data_[lo + 1], &data_[lo], (size_ - lo) * sizeof(Candidate<float>));
-        // t2 = std::chrono::high_resolution_clock::now();
-        // ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()
-        //    << " ns\t" << lo << "\t" << size_ << "\t";
-        // t1 = std::chrono::high_resolution_clock::now();
         data_[lo] = Candidate<float>(data_id, dist);
         size_ += static_cast<size_t>(size_ < capacity_);
         cur_ = lo < cur_ ? lo : cur_;
-        // t2 = std::chrono::high_resolution_clock::now();
-        // ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
-        // std::cout << ss.str() << std::endl;
     }
 
     [[nodiscard]] auto is_full(float dist) const -> bool {
@@ -109,6 +97,15 @@ class BucketBuffer {
         return static_cast<bool>(data_id >> 31);
     }
 
+    [[nodiscard]] bool buffer_has_next() const {
+        for (size_t i = 0; i < this->h_buffer_; ++i) {
+            if (!is_checked(this->buffer_[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
    public:
     BucketBuffer() = default;
 
@@ -136,7 +133,8 @@ class BucketBuffer {
     }
 
     [[nodiscard]] auto has_next() const -> bool {
-        return this->bucket_.has_next();
+        /* order is important! */
+        return this->buffer_has_next() || this->bucket_.has_next();
     }
 
     void resize(size_t new_size) {
@@ -178,42 +176,26 @@ class BucketBuffer {
 };
 
 class Strip {
-   public:
-    enum StripState {
-        COLLECTED,
-        SCANNING,
-        SCANNED,
-        COLLECTING
-    };
-
    private:
     float* dist_;
     size_t w_;          /* mininal operation width ( == max_degree) */
     size_t length_;
-    size_t h_;
-    size_t size_;       /* size of dist_ == w_ * length_ * h_ */
-    size_t collector_pos_;
-    size_t scanner_pos_;
-
-    struct alignas(64) ArrayData {
-        std::array<std::atomic<StripState>, 2> state_;
-        std::array<PID, 4> pids_;   /* TODO: Hard code for now */
-    } data_;
+    size_t size_;       /* size of dist_ == w_ * length_ */
+    size_t collector_pos_;  /* collector position in `pids_`. all pids before collector_pos_ are collected */
+    size_t scanner_pos_;    /* scanner position in `pids_` */
+    std::vector<PID> pids_;
 
    public:
     Strip() = default;
 
-    explicit Strip(size_t w_, size_t h_)
+    explicit Strip(size_t w_, size_t length)
         : w_(w_), 
-        length_(2),
-        h_(h_),
-        size_(w_ * length_ * h_),
+        length_(length),
+        size_(w_ * length_),
         collector_pos_(0),
-        scanner_pos_(0) {
+        scanner_pos_(0),
+        pids_(length) {
             dist_ = new float[size_];
-            for (size_t i = 0; i < length_; ++i) {
-                this->data_.state_[i] = StripState::COLLECTED;
-            }
         }
     
     ~Strip() {
@@ -223,58 +205,31 @@ class Strip {
     void clear() {
         this->collector_pos_ = 0;
         this->scanner_pos_ = 0;
-        for (size_t i = 0; i < length_; ++i) {
-            this->data_.state_[i] = StripState::COLLECTED;
-        }
     }
 
-    /* return if any strip is collecting */
-    [[nodiscard]] bool is_collecting() const {
-        return this->data_.state_[collector_pos_].load(std::memory_order_acquire) == StripState::COLLECTING;
-    }
-
-    /* return if any strip is scanned */
-    [[nodiscard]] bool is_scanned() const {
-        return this->data_.state_[scanner_pos_].load(std::memory_order_acquire) == StripState::SCANNED;
-    }
-
-    void set_scanned(PID* pid) {
-        std::memcpy(this->data_.pids_.data() + scanner_pos_ * this->h_, pid, this->h_ * sizeof(PID));
-        this->data_.state_[scanner_pos_].store(StripState::SCANNED, std::memory_order_release);
+    /* set scanned and return true if scanner may be stalled by collector in next round */
+    bool set_scanned(PID pid) {
+        pids_[scanner_pos_ % length_] = pid;
+        bool stalled = (scanner_pos_ + 1) % length_ == collector_pos_ % length_;
+        scanner_pos_ += static_cast<size_t>(!stalled);
+        return stalled;
     }
 
     void set_collected() {
-        this->data_.state_[collector_pos_].store(StripState::COLLECTED, std::memory_order_release);
+        collector_pos_++;
     }
 
-    /* spin until get a buffer with COLLECTED state */
-    [[nodiscard]] float* try_get_scanner_buffer() {
-        size_t new_scanner_pos = scanner_pos_ ^ 1;
-
-        StripState expected = StripState::COLLECTED;
-        const StripState desired = StripState::SCANNING;
-
-        if (this->data_.state_[new_scanner_pos].compare_exchange_strong(expected, desired)) {
-            this->scanner_pos_ = new_scanner_pos;
-            return this->dist_ + new_scanner_pos * this->w_ * this->h_;
-        }
-
-        return nullptr;
+    [[nodiscard]] float* get_scanner() {
+        return dist_ + (scanner_pos_ % length_) * w_;
     }
 
-    /* try getting a buffer with SCANNED state, return std::pari(1U << 31, nullptr) if fail */
-    [[nodiscard]] std::pair<PID*, float*> try_get_collector_buffer() {
-        size_t new_collector_pos = collector_pos_ ^ 1;
-
-        StripState expected = StripState::SCANNED;
-        const StripState desired = StripState::COLLECTING;
-
-        if (this->data_.state_[new_collector_pos].compare_exchange_strong(expected, desired)) {
-            this->collector_pos_ = new_collector_pos;
-            return std::make_pair(this->data_.pids_.data() + this->h_ * new_collector_pos, this->dist_ + new_collector_pos * this->w_ * this->h_);
+    [[nodiscard]] std::pair<PID, float*> try_get_collector() {
+        if (collector_pos_ < scanner_pos_) {
+            return std::make_pair(pids_[collector_pos_ % length_], dist_ + (collector_pos_ % length_) * w_);
+        } else if (collector_pos_ == scanner_pos_) {
+            return std::make_pair(NOT_FOUND, nullptr);
         }
-
-        return std::make_pair(nullptr, nullptr);
+        throw std::runtime_error("collector_pos_ > scanner_pos_");
     }
 };
 
