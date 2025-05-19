@@ -209,8 +209,8 @@ class Strip {
 
     /* set scanned and return true if scanner may be stalled by collector in next round */
     bool set_scanned(PID pid) {
-        pids_[scanner_pos_ % length_] = pid;
-        bool stalled = (scanner_pos_ + 1) % length_ == collector_pos_ % length_;
+        pids_[scanner_pos_ & (length_ - 1)] = pid;
+        bool stalled = ((scanner_pos_ + 1) & (length_ - 1)) == (collector_pos_ & (length_ - 1));
         scanner_pos_ += static_cast<size_t>(!stalled);
         return stalled;
     }
@@ -220,12 +220,12 @@ class Strip {
     }
 
     [[nodiscard]] float* get_scanner() {
-        return dist_ + (scanner_pos_ % length_) * w_;
+        return dist_ + (scanner_pos_ & (length_ - 1)) * w_;
     }
 
     [[nodiscard]] std::pair<PID, float*> try_get_collector() {
         if (collector_pos_ < scanner_pos_) {
-            return std::make_pair(pids_[collector_pos_ % length_], dist_ + (collector_pos_ % length_) * w_);
+            return std::make_pair(pids_[collector_pos_ & (length_ - 1)], dist_ + (collector_pos_ & (length_ - 1)) * w_);
         } else if (collector_pos_ == scanner_pos_) {
             return std::make_pair(NOT_FOUND, nullptr);
         }
