@@ -275,10 +275,15 @@ inline void QuantizedGraph::search(
     num_collector_try_insert_ = 0;
     num_collector_insert_ = 0;
 
+#if defined(DEBUG)
     auto t_start = std::chrono::high_resolution_clock::now();
+#endif
     search_qg(query, knn, results);
+#if defined(DEBUG)
     auto t_end = std::chrono::high_resolution_clock::now();
+    std::cout << "-----------------------------------------------------------" << std::endl;
     std::cout << "[master] total time:              " << std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_start).count() << " ns\t" << scan_count_ << std::endl;
+#endif
     // print time as a table
     // std::cout
     // << dimension_ << "," 
@@ -295,11 +300,11 @@ inline void QuantizedGraph::search(
     // << std::endl;
 #if defined(DEBUG)
     std::cout << "[master] num_scann, num_collect:  " << scan_count_ << ", " << scan_count_ << std::endl;
-    std::cout << "[scanner] pop:                    " << scanner_pop_time_ << "\t\t" << scanner_pop_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
-    std::cout << "[scanner] l2_sqr:                 " << scanner_l2_sqr_time_ << "\t\t" << scanner_l2_sqr_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
-    std::cout << "[scanner] scan:                   " << scanner_scan_time_ << "\t\t" << scanner_scan_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
-    std::cout << "[scanner] insert result:          " << scanner_insert_result_time_ << "\t\t" << scanner_insert_result_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
-    std::cout << "[collector] insert:               " << collector_insert_time_ << '\t' << collector_insert_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
+    std::cout << "[scanner] pop:                    " << scanner_pop_time_ << "ns\t" << scanner_pop_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
+    std::cout << "[scanner] l2_sqr:                 " << scanner_l2_sqr_time_ << "ns\t" << scanner_l2_sqr_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
+    std::cout << "[scanner] scan:                   " << scanner_scan_time_ << "ns\t" << scanner_scan_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
+    std::cout << "[scanner] insert result:          " << scanner_insert_result_time_ << "ns\t" << scanner_insert_result_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
+    std::cout << "[collector] insert:               " << collector_insert_time_ << "ns\t" << collector_insert_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
     std::cout << "[collector] num_insert(try):      " << num_collector_insert_ << '(' << num_collector_try_insert_<< ')' << std::endl;
 #endif
 }
