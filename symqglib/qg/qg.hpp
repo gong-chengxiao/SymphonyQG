@@ -356,7 +356,8 @@ inline void QuantizedGraph::search(
     std::cout << "[scanner] backspace:                        " << scanner_backspace_time_ << " ns\t" << (scanner_num_backspace_ ? scanner_backspace_time_ / scanner_num_backspace_ : 0) << " ns\t\t" << scanner_num_backspace_ << std::endl;
     std::cout << "[collector] get strip:                      " << collector_try_get_collector_buffer_time_ << " ns\t" << collector_try_get_collector_buffer_time_ / num_collected_ << " ns\t\t" << num_collected_ << std::endl;
     std::cout << "[collector] retry get strip:                " << collector_retry_get_strip_time_ << " ns\t" << (collector_num_retry_get_strip_ ? collector_retry_get_strip_time_ / collector_num_retry_get_strip_ : 0) << " ns\t\t" << collector_num_retry_get_strip_ << std::endl;
-    std::cout << "[collector] insert(try):                    " << collector_insert_time_ << " ns\t" << collector_insert_time_ / num_collected_ << " ns\t\t" << num_collector_insert_ << '(' << num_collector_try_insert_ << ')' << std::endl;
+    std::cout << "[collector] insert:                         " << collector_insert_time_ << " ns\t" << collector_insert_time_ / num_collected_ << " ns\t\t" << num_collected_ << std::endl;
+    std::cout << "[collector] num_insert(try):                " << (float)num_collector_insert_ / num_collector_try_insert_ << "\t\t\t" << num_collector_insert_ << '(' << num_collector_try_insert_ << ')' << std::endl;
 #endif
 }
 

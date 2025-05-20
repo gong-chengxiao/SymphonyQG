@@ -39,6 +39,18 @@ class SearchBuffer {
 
     explicit SearchBuffer(size_t capacity) : data_(capacity + 1), capacity_(capacity) {}
 
+    void prefetch() {
+        memory::mem_prefetch_l2(
+            reinterpret_cast<const char*>(data_.data()), 20
+        );
+        memory::mem_prefetch_l2(
+            reinterpret_cast<const char*>(data_.data() + 20), 20
+        );
+        memory::mem_prefetch_l2(
+            reinterpret_cast<const char*>(data_.data() + 40), 20
+        );
+    }
+
     // insert a data point into buffer
     void insert(PID data_id, float dist) {
         size_t lo = binary_search(dist);
@@ -127,7 +139,9 @@ class BucketBuffer {
             this->buffer_[i] = NOT_FOUND;
         }
     }
-    
+
+    void prefetch_bucket() { bucket_.prefetch(); }
+
     [[nodiscard]] auto is_full(float dist) const -> bool {
         return this->bucket_.is_full(dist);
     }
