@@ -305,7 +305,7 @@ inline void QuantizedGraph::search(
     std::cout << "[scanner] scan:                   " << scanner_scan_time_ << " ns\t" << scanner_scan_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
     std::cout << "[scanner] insert result:          " << scanner_insert_result_time_ << " ns\t" << scanner_insert_result_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
     std::cout << "[collector] insert:               " << collector_insert_time_ << " ns\t" << collector_insert_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
-    std::cout << "[collector] num_insert(try):      " << num_collector_insert_ << '(' << num_collector_try_insert_<< ')' << std::endl;
+    std::cout << "[collector] num_insert(try):      " << (float)num_collector_insert_ / num_collector_try_insert_ << "\t\t" << num_collector_insert_ << '(' << num_collector_try_insert_<< ')' << std::endl;
 #endif
 }
 
@@ -398,9 +398,9 @@ inline void QuantizedGraph::search_qg(
             num_collector_insert_++;
             search_pool_.insert(cur_neighbor, tmp_dist);
             // is_in_head |= search_pool_.insert(cur_neighbor, tmp_dist);
-            memory::mem_prefetch_l2(
-                reinterpret_cast<const char*>(get_vector(search_pool_.next_id())), 10
-            );
+            // memory::mem_prefetch_l2(
+            //     reinterpret_cast<const char*>(get_vector(search_pool_.next_id())), 10
+            // );
         }
         t2 = std::chrono::high_resolution_clock::now();
         collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
