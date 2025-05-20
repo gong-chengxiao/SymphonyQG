@@ -419,9 +419,10 @@ inline void QuantizedGraph::search_qg_parallel(
 #if defined(DEBUG)
     auto t2 = std::chrono::high_resolution_clock::now();
     std::stringstream ss;
-    ss << "[master] buckets_prepare:                   "
-              << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()
-              << " ns" << std::endl;
+    ss << "---------------------------------------------------------------------------------" << std::endl
+       << "[master] buckets_prepare:                   "
+       << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()
+       << " ns" << std::endl;
 #endif
 #if defined(DEBUG)
     t1 = std::chrono::high_resolution_clock::now();
@@ -439,7 +440,6 @@ inline void QuantizedGraph::search_qg_parallel(
 #if defined(DEBUG)
     t2 = std::chrono::high_resolution_clock::now();
     ss << "[master] waking up workers:                 " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
-    std::cout << ss.str();
 #endif
 #if defined(DEBUG)
     t1 = std::chrono::high_resolution_clock::now();
@@ -455,7 +455,7 @@ inline void QuantizedGraph::search_qg_parallel(
     result_pool_.copy_results(results);
 #if defined(DEBUG)
     t2 = std::chrono::high_resolution_clock::now();
-    ss << "[master] waiting for workers to finish:     " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+    ss << "[master] finish one query:                  " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
     std::cout << ss.str();
 #endif
 }
@@ -518,13 +518,13 @@ inline void QuantizedGraph::scanner_task(
         }
         visited_.set(cur_node);
         const float* cur_data = get_vector(cur_node);
+        const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
+        const auto* factor = &cur_data[factor_offset_];
 #if defined(DEBUG)
         auto t2 = std::chrono::high_resolution_clock::now();
         this->scanner_try_pop_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #endif
         float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
-        const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
-        const auto* factor = &cur_data[factor_offset_];
 #if defined(DEBUG)
         t1 = std::chrono::high_resolution_clock::now();
         this->scanner_l2_sqr_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t2).count();
@@ -671,12 +671,16 @@ void QuantizedGraph::scanner_loop() {
         }
 
         if (local_query) { /* Should always be true if not shutting down */
-            auto t1 = std::chrono::high_resolution_clock::now();
+// #if defined(DEBUG)
+//             auto t1 = std::chrono::high_resolution_clock::now();
+// #endif
             scanner_task(*local_query);
-            auto t2 = std::chrono::high_resolution_clock::now();
-            std::stringstream ss;
-            ss << "[scanner] total time:                       " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
-            std::cout << ss.str();
+// #if defined(DEBUG)
+//             auto t2 = std::chrono::high_resolution_clock::now();
+//             std::stringstream ss;
+//             ss << "[scanner] total time:                       " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+//             std::cout << ss.str();
+// #endif
             is_scanner_task_finished_ = true;
             search_task_available_.store(false, std::memory_order_release);
             work_finished_cv_.notify_one();
@@ -697,12 +701,16 @@ void QuantizedGraph::collector_loop() {
                 return; /* Exit thread */
             }
         }
-        auto t1 = std::chrono::high_resolution_clock::now();
+// #if defined(DEBUG)
+//         auto t1 = std::chrono::high_resolution_clock::now();
+// #endif
         collector_task();
-        auto t2 = std::chrono::high_resolution_clock::now();
-        std::stringstream ss;
-        ss << "[collector] total time:                     " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
-        std::cout << ss.str();
+// #if defined(DEBUG)
+//         auto t2 = std::chrono::high_resolution_clock::now();
+//         std::stringstream ss;
+//         ss << "[collector] total time:                     " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
+//         std::cout << ss.str();
+// #endif
         is_collector_task_finished_ = true;
         search_task_available_.store(false, std::memory_order_release);
         work_finished_cv_.notify_one();
@@ -797,6 +805,15 @@ inline void QuantizedGraph::initialize() {
 #endif
     this->scanner_thread_ = std::thread(&QuantizedGraph::scanner_loop, this);
     this->collector_thread_ = std::thread(&QuantizedGraph::collector_loop, this);
+
+    cpu_set_t scanner_cpu, collector_cpu;
+    CPU_ZERO(&scanner_cpu);
+    CPU_ZERO(&collector_cpu);
+    CPU_SET(7, &scanner_cpu);
+    CPU_SET(15, &collector_cpu);
+    pthread_setaffinity_np(scanner_thread_.native_handle(), sizeof(cpu_set_t), &scanner_cpu);
+    pthread_setaffinity_np(collector_thread_.native_handle(), sizeof(cpu_set_t), &collector_cpu);
+    
 #if defined(DEBUG)
     auto t2 = std::chrono::high_resolution_clock::now();
     std::cout << "spawning threads time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns" << std::endl;
