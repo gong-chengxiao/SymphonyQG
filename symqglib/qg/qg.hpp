@@ -605,6 +605,10 @@ inline void QuantizedGraph::scanner_task(
 }
 
 inline void QuantizedGraph::collector_task() {
+    // bucket_buffer_.prefetch_bucket();
+    size_t throhold_mask = 0x7;
+    size_t num_insert = 0;
+
     while (!is_search_finished_.load(std::memory_order_acquire)) {
 #if defined(DEBUG)
         auto t1 = std::chrono::high_resolution_clock::now();
@@ -623,16 +627,11 @@ inline void QuantizedGraph::collector_task() {
         auto t2 = std::chrono::high_resolution_clock::now();
         this->collector_try_get_collector_buffer_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #endif
-        size_t throhold_mask = 0xf;
-        size_t num_insert = 0;
         const PID cur_node = pair.first;
         const float* cur_data = get_vector(cur_node);
         float* appro_dist = pair.second;
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
         for (uint32_t i = 0; i < degree_bound_; ++i) {
-            if (!(++num_insert & throhold_mask)) {
-                bucket_buffer_.try_promote();
-            }
 #if defined(DEBUG)
             this->num_collector_try_insert_++;
 #endif
@@ -640,6 +639,9 @@ inline void QuantizedGraph::collector_task() {
             float tmp_dist = appro_dist[i];
             if (bucket_buffer_.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
                 continue;
+            }
+            if (!(++num_insert & throhold_mask)) {
+                bucket_buffer_.try_promote();
             }
 #if defined(DEBUG)
             this->num_collector_insert_++;
