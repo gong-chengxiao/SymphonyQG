@@ -22,7 +22,7 @@
 #include "./qg_query.hpp"
 #include "./qg_scanner.hpp"
 
-#define DEBUG
+// #define DEBUG
 
 namespace symqg {
 /**
@@ -105,13 +105,16 @@ class QuantizedGraph {
                         scanner_backspace_time_,
                         scanner_num_backspace_;
 
-    std::atomic<size_t> collector_try_get_collector_buffer_time_,
+    std::atomic<size_t> collector_try_get_strip_time_,
                         collector_insert_time_,
                         collector_retry_get_strip_time_,
                         collector_num_retry_get_strip_,
                         num_collector_try_insert_,
                         num_collector_insert_;
 #endif
+    size_t collector_insert_branch_time_ = 0;
+    size_t collector_insert_promote_time_ = 0;
+    size_t num_collected_ = 0;
 
     void initialize();
 
@@ -335,13 +338,16 @@ inline void QuantizedGraph::search(
     this->scanner_num_retry_pop_ = 0;
     this->scanner_backspace_time_ = 0;
     this->scanner_num_backspace_ = 0;
-    this->collector_try_get_collector_buffer_time_ = 0;
+    this->collector_try_get_strip_time_ = 0;
     this->collector_insert_time_ = 0;
     this->collector_retry_get_strip_time_ = 0;
     this->collector_num_retry_get_strip_ = 0;
     this->num_collector_try_insert_ = 0;
     this->num_collector_insert_ = 0;
 #endif
+    this->collector_insert_branch_time_ = 0;
+    this->collector_insert_promote_time_ = 0;
+    this->num_collected_ = 0;
 
     search_qg_parallel(query, knn, results);
 
@@ -354,11 +360,13 @@ inline void QuantizedGraph::search(
     std::cout << "[scanner] scan neighbors:                   " << scanner_scan_neighbors_time_ << " ns\t" << scanner_scan_neighbors_time_ / num_scanned_ << " ns\t\t" << num_scanned_ << std::endl;
     std::cout << "[scanner] insert results:                   " << scanner_insert_results_time_ << " ns\t" << scanner_insert_results_time_ / num_scanned_ << " ns\t\t" << num_scanned_ << std::endl;
     std::cout << "[scanner] backspace:                        " << scanner_backspace_time_ << " ns\t" << (scanner_num_backspace_ ? scanner_backspace_time_ / scanner_num_backspace_ : 0) << " ns\t\t" << scanner_num_backspace_ << std::endl;
-    std::cout << "[collector] get strip:                      " << collector_try_get_collector_buffer_time_ << " ns\t" << collector_try_get_collector_buffer_time_ / num_collected_ << " ns\t\t" << num_collected_ << std::endl;
+    std::cout << "[collector] get strip:                      " << collector_try_get_strip_time_ << " ns\t" << collector_try_get_strip_time_ / num_collected_ << " ns\t\t" << num_collected_ << std::endl;
     std::cout << "[collector] retry get strip:                " << collector_retry_get_strip_time_ << " ns\t" << (collector_num_retry_get_strip_ ? collector_retry_get_strip_time_ / collector_num_retry_get_strip_ : 0) << " ns\t\t" << collector_num_retry_get_strip_ << std::endl;
     std::cout << "[collector] insert:                         " << collector_insert_time_ << " ns\t" << collector_insert_time_ / num_collected_ << " ns\t\t" << num_collected_ << std::endl;
     std::cout << "[collector] num_insert(try):                " << (float)num_collector_insert_ / num_collector_try_insert_ << "\t\t\t" << num_collector_insert_ << '(' << num_collector_try_insert_ << ')' << std::endl;
 #endif
+    std::cout << "[collector] insert branch:                 " << collector_insert_branch_time_ << " ns\t" << collector_insert_branch_time_ / num_collected_ << " ns\t\t" << num_collected_ << std::endl;
+    std::cout << "[collector] insert promote:                " << collector_insert_promote_time_ << " ns\t" << collector_insert_promote_time_ / num_collected_ << " ns\t\t" << num_collected_ << std::endl;
 }
 
 /**
@@ -624,13 +632,15 @@ inline void QuantizedGraph::collector_task() {
 #endif
             continue;
         }
-#if defined(DEBUG)
-        auto t2 = std::chrono::high_resolution_clock::now();
-        this->collector_try_get_collector_buffer_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
-#endif
         const PID cur_node = pair.first;
         const float* cur_data = get_vector(cur_node);
         float* appro_dist = pair.second;
+
+        this->num_collected_++;
+#if defined(DEBUG)
+        auto t2 = std::chrono::high_resolution_clock::now();
+        this->collector_try_get_strip_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+#endif
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
         for (uint32_t i = 0; i < degree_bound_; ++i) {
 #if defined(DEBUG)
@@ -638,11 +648,16 @@ inline void QuantizedGraph::collector_task() {
 #endif
             PID cur_neighbor = ptr_nb[i];
             float tmp_dist = appro_dist[i];
+            auto t1 = std::chrono::high_resolution_clock::now();
             if (bucket_buffer_.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
+                auto t2 = std::chrono::high_resolution_clock::now();
+                this->collector_insert_branch_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
                 continue;
             }
             if (!(++num_insert & throhold_mask)) {
                 bucket_buffer_.try_promote();
+                auto t2 = std::chrono::high_resolution_clock::now();
+                this->collector_insert_promote_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
             }
 #if defined(DEBUG)
             this->num_collector_insert_++;
@@ -651,7 +666,6 @@ inline void QuantizedGraph::collector_task() {
         }
         strip_.set_collected();
 #if defined(DEBUG)
-        this->num_collected_++;
         t1 = std::chrono::high_resolution_clock::now();
         this->collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t2).count();
 #endif
