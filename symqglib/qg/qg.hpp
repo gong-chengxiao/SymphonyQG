@@ -52,6 +52,8 @@ class QuantizedGraph {
     mutable size_t collector_num_try_insert_, collector_num_pure_insert_;
     mutable size_t collector_insert_branch_time_;
     mutable size_t collector_pure_insert_time_;
+    mutable size_t *compute_time_, *insert_time_;
+    mutable size_t compute_time_pos_, insert_time_pos_;
 
     mutable size_t num_is_in_head_;
 
@@ -244,6 +246,8 @@ inline void QuantizedGraph::load_index(const char* filename) {
 
 inline void QuantizedGraph::set_ef(size_t cur_ef) {
     this->search_pool_.resize(cur_ef);
+    this->compute_time_ = new size_t[cur_ef << 1];
+    this->insert_time_ = new size_t[cur_ef << 1];
     this->visited_ = HashBasedBooleanSet(std::min(this->num_points_ / 10, cur_ef * cur_ef));
 }
 
@@ -268,6 +272,9 @@ inline void QuantizedGraph::search(
     collector_insert_branch_time_ = 0;
     collector_pure_insert_time_ = 0;
 
+    compute_time_pos_ = 0;
+    insert_time_pos_ = 0;
+
 #if defined(DEBUG)
     auto t_start = std::chrono::high_resolution_clock::now();
 #endif
@@ -287,7 +294,19 @@ inline void QuantizedGraph::search(
     // std::cout << "SymphonyQG," << collector_insert_branch_time_ << "," << collector_insert_branch_time_ / collector_num_try_insert_ << "," << collector_num_try_insert_ << std::endl;
     // std::cout << "SymphonyQG," << collector_pure_insert_time_ << "," << collector_pure_insert_time_ / collector_num_pure_insert_ << "," << collector_num_pure_insert_ << std::endl;
     // std::cout << "SymphonyQG," << collector_insert_time_ << "," << collector_insert_time_ / scan_count_ << "," << scan_count_ << std::endl;
-    std::cout << "SymphonyQG," << collector_num_pure_insert_ << "," << (float)collector_num_pure_insert_ / collector_num_try_insert_ << "," << collector_num_try_insert_ << std::endl;
+    // std::cout << "SymphonyQG," << collector_num_pure_insert_ << "," << (float)collector_num_pure_insert_ / collector_num_try_insert_ << "," << collector_num_try_insert_ << std::endl;
+
+    // size_t total_compute_time = 0;
+    // for (size_t i = 0; i < compute_time_pos_; ++i) {
+    //     total_compute_time += compute_time_[i];
+    // }
+    // std::cout << "SymphonyQG,compute," << total_compute_time << "," << total_compute_time / compute_time_pos_ << "," << compute_time_pos_ << std::endl;
+    
+    size_t total_insert_time = 0;
+    for (size_t i = 0; i < insert_time_pos_; ++i) {
+        total_insert_time += insert_time_[i];
+    }
+    std::cout << "SymphonyQG,insert," << total_insert_time << "," << total_insert_time / insert_time_pos_ << "," << insert_time_pos_ << std::endl;
 }
 
 /**
@@ -348,6 +367,7 @@ inline void QuantizedGraph::search_qg(
         auto t2 = std::chrono::high_resolution_clock::now();
         scanner_pop_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #endif
+        // auto t1 = std::chrono::high_resolution_clock::now();
         volatile float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
 
 #if defined(DEBUG)
@@ -375,16 +395,18 @@ inline void QuantizedGraph::search_qg(
             packed_code,
             factor
         );
+        // auto t2 = std::chrono::high_resolution_clock::now();
+        // compute_time_[compute_time_pos_++] = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 
 #if defined(DEBUG)
         auto t1 = std::chrono::high_resolution_clock::now();
         scanner_scan_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t2).count();
 #endif
-
+        auto t1 = std::chrono::high_resolution_clock::now();
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
         for (uint32_t i = 0; i < degree_bound_; ++i) {
             // auto t1 = std::chrono::high_resolution_clock::now();
-            collector_num_try_insert_++;
+            // collector_num_try_insert_++;
             PID cur_neighbor = ptr_nb[i];
             float tmp_dist = appro_dist[i];
             if (search_pool_.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
@@ -392,7 +414,7 @@ inline void QuantizedGraph::search_qg(
                 // collector_insert_branch_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
                 continue;
             }
-            collector_num_pure_insert_++;
+            // collector_num_pure_insert_++;
             // auto t1 = std::chrono::high_resolution_clock::now();
             search_pool_.insert(cur_neighbor, tmp_dist);
             // auto t2 = std::chrono::high_resolution_clock::now();
@@ -400,10 +422,12 @@ inline void QuantizedGraph::search_qg(
             // collector_pure_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
             // is_in_head |= search_pool_.insert(cur_neighbor, tmp_dist);
 
-            // memory::mem_prefetch_l2(
-            //     reinterpret_cast<const char*>(get_vector(search_pool_.next_id())), 10
-            // );
+            memory::mem_prefetch_l2(
+                reinterpret_cast<const char*>(get_vector(search_pool_.next_id())), 10
+            );
         }
+        auto t2 = std::chrono::high_resolution_clock::now();
+        insert_time_[insert_time_pos_++] = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #if defined(DEBUG)
         auto t2 = std::chrono::high_resolution_clock::now();
         collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
