@@ -179,12 +179,16 @@ class BucketBuffer {
         this->bucket_.insert(data_id, dist);
     }
 
-    void try_promote() {
+    /* TEST: return the number of promoted pids */
+    size_t try_promote() {
+        size_t num_promoted = 0;
         for (size_t i = 0; i < this->h_buffer_; ++i) {
             if (is_checked(this->buffer_[i]) && this->bucket_.has_next()) {
                 this->buffer_[i] = this->bucket_.pop();
+                ++num_promoted;
             }
         }
+        return num_promoted;
     }
     
 };
