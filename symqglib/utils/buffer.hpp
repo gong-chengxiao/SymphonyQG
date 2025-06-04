@@ -168,27 +168,15 @@ class BucketBuffer {
     }
 
     void insert(PID data_id, float dist) {
-        // if (dist < this->bucket_.next_dist()) {
-        //     for (size_t i = this->h_buffer_; i > 0; --i) {
-        //         if (is_checked(this->buffer_[i - 1])) {
-        //             this->buffer_[i - 1] = data_id;
-        //             return;
-        //         }
-        //     }
-        // }
         this->bucket_.insert(data_id, dist);
     }
 
-    /* TEST: return the number of promoted pids */
-    size_t try_promote() {
-        size_t num_promoted = 0;
+    void try_promote() {
         for (size_t i = 0; i < this->h_buffer_; ++i) {
             if (is_checked(this->buffer_[i]) && this->bucket_.has_next()) {
                 this->buffer_[i] = this->bucket_.pop();
-                ++num_promoted;
             }
         }
-        return num_promoted;
     }
     
 };

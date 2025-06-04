@@ -36,7 +36,7 @@ struct Factor {
     float factor_vq;  // Factor of v_l * ||q_r||
 };
 
-const size_t h_buffer_ = 1;
+const size_t h_buffer_ = 4;
 const size_t length_strip_ = 8;
 
 class QuantizedGraph {
@@ -649,8 +649,8 @@ inline void QuantizedGraph::scanner_task(
 
 inline void QuantizedGraph::collector_task() {
     // bucket_buffer_.prefetch_bucket();
-    size_t throhold_mask = 0x7;
-    size_t num_insert = 0;
+    // size_t throhold_mask = 0x7;
+    // size_t num_insert = 0;
 
     while (!is_search_finished_.load(std::memory_order_acquire)) {
 #if defined(DEBUG)
@@ -663,7 +663,7 @@ inline void QuantizedGraph::collector_task() {
             // auto t2 = std::chrono::high_resolution_clock::now();
             // this->collector_get_strip_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
             // auto t1 = std::chrono::high_resolution_clock::now();
-            size_t num_promoted = bucket_buffer_.try_promote();
+            bucket_buffer_.try_promote();
             // auto t2 = std::chrono::high_resolution_clock::now();
             // std::cout << "xanns," << h_buffer_ << "," << num_promoted << "," << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << std::endl;
             // this->collector_try_promote_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
