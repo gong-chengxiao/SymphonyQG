@@ -300,13 +300,23 @@ inline void QuantizedGraph::search(
     // for (size_t i = 0; i < compute_time_pos_; ++i) {
     //     total_compute_time += compute_time_[i];
     // }
-    // std::cout << "SymphonyQG,compute," << total_compute_time << "," << total_compute_time / compute_time_pos_ << "," << compute_time_pos_ << std::endl;
+    // std::cout << "SymphonyQG,compute," << total_compute_time << "," << total_compute_time / compute_time_pos_ << "," << compute_time_pos_ << ",10" << std::endl;
     
-    size_t total_insert_time = 0;
+    // size_t total_insert_time = 0;
+    // for (size_t i = 0; i < insert_time_pos_; ++i) {
+    //     total_insert_time += insert_time_[i];
+    // }
+    // std::cout << "SymphonyQG,insert," << total_insert_time << "," << total_insert_time / insert_time_pos_ << "," << insert_time_pos_ << ",10" << std::endl;
+
+    // for (size_t i = 0; i < compute_time_pos_; ++i) {
+    //     std::cout << compute_time_[i] << ",";
+    // }
+    // std::cout << std::endl;
+
     for (size_t i = 0; i < insert_time_pos_; ++i) {
-        total_insert_time += insert_time_[i];
+        std::cout << insert_time_[i] << ",";
     }
-    std::cout << "SymphonyQG,insert," << total_insert_time << "," << total_insert_time / insert_time_pos_ << "," << insert_time_pos_ << std::endl;
+    std::cout << std::endl;
 }
 
 /**
