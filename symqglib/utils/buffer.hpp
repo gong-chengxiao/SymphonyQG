@@ -52,12 +52,13 @@ class SearchBuffer {
     }
 
     // insert a data point into buffer
-    void insert(PID data_id, float dist) {
+    size_t insert(PID data_id, float dist) {
         size_t lo = binary_search(dist);
         std::memmove(&data_[lo + 1], &data_[lo], (size_ - lo) * sizeof(Candidate<float>));
         data_[lo] = Candidate<float>(data_id, dist);
         size_ += static_cast<size_t>(size_ < capacity_);
         cur_ = lo < cur_ ? lo : cur_;
+        return static_cast<size_t>(cur_ == lo);
     }
 
     [[nodiscard]] auto is_full(float dist) const -> bool {
@@ -147,8 +148,8 @@ class BucketBuffer {
     }
 
     [[nodiscard]] auto has_next() const -> bool {
-        /* order is important! */
-        return this->buffer_has_next() || this->bucket_.has_next();
+        /* order depends on the order inside `try_promote` */
+        return this->bucket_.has_next() || this->buffer_has_next();
     }
 
     void resize(size_t new_size) {
