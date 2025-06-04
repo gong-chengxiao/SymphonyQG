@@ -37,7 +37,7 @@ class SearchBuffer {
     explicit SearchBuffer(size_t capacity) : data_(capacity + 1), capacity_(capacity) {}
 
     // insert a data point into buffer
-    int insert(PID data_id, float dist) {
+    size_t insert(PID data_id, float dist) {
         // auto t1 = std::chrono::high_resolution_clock::now();
         size_t lo = binary_search(dist);
         // auto t2 = std::chrono::high_resolution_clock::now();

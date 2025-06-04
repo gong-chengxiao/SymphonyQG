@@ -412,21 +412,29 @@ inline void QuantizedGraph::search_qg(
         auto t1 = std::chrono::high_resolution_clock::now();
         scanner_scan_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t2).count();
 #endif
-        auto t1 = std::chrono::high_resolution_clock::now();
+        // auto t1 = std::chrono::high_resolution_clock::now();
+        // size_t num_visited = 0;
+        // size_t num_too_far = 0;
+        size_t num_nearest = 0;
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
         for (uint32_t i = 0; i < degree_bound_; ++i) {
             // auto t1 = std::chrono::high_resolution_clock::now();
             // collector_num_try_insert_++;
             PID cur_neighbor = ptr_nb[i];
             float tmp_dist = appro_dist[i];
-            if (search_pool_.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
+            if (visited_.get(cur_neighbor)) {
+                // num_visited++;
+                continue;
+            }
+            if (search_pool_.is_full(tmp_dist)) {
+                // num_too_far++;
                 // auto t2 = std::chrono::high_resolution_clock::now();
                 // collector_insert_branch_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
                 continue;
             }
             // collector_num_pure_insert_++;
             // auto t1 = std::chrono::high_resolution_clock::now();
-            search_pool_.insert(cur_neighbor, tmp_dist);
+            num_nearest += search_pool_.insert(cur_neighbor, tmp_dist);
             // auto t2 = std::chrono::high_resolution_clock::now();
             // collector_insert_branch_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
             // collector_pure_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -436,8 +444,11 @@ inline void QuantizedGraph::search_qg(
                 reinterpret_cast<const char*>(get_vector(search_pool_.next_id())), 10
             );
         }
-        auto t2 = std::chrono::high_resolution_clock::now();
-        insert_time_[insert_time_pos_++] = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+        // insert_time_[insert_time_pos_++] = num_visited; // borrow from insert_time_ to record num_visited
+        // insert_time_[insert_time_pos_++] = num_too_far;   // borrow from insert_time_ to record num_too_far
+        insert_time_[insert_time_pos_++] = num_nearest;   // borrow from insert_time_ to record num_nearest
+        // auto t2 = std::chrono::high_resolution_clock::now();
+        // insert_time_[insert_time_pos_++] = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #if defined(DEBUG)
         auto t2 = std::chrono::high_resolution_clock::now();
         collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -489,7 +500,7 @@ inline float QuantizedGraph::scan_neighbors(
     // wall_time = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
     // cpu_time = (static_cast<int64_t>(u2.tv_sec) - static_cast<int64_t>(u1.tv_sec)) * 1e9 +
     //            (static_cast<int64_t>(u2.tv_nsec) - static_cast<int64_t>(u1.tv_nsec));
-    // ` += wall_time;
+    // scan_time_ += wall_time;
     // scanner_cpu_time_ += cpu_time;
 
     // t1 = std::chrono::high_resolution_clock::now();
@@ -499,7 +510,10 @@ inline float QuantizedGraph::scan_neighbors(
     for (uint32_t i = 0; i < cur_degree; ++i) {
         PID cur_neighbor = ptr_nb[i];
         float tmp_dist = appro_dist[i];
-        if (search_pool.is_full(tmp_dist) || visited_.get(cur_neighbor)) {
+        if (visited_.get(cur_neighbor)) {
+            continue;
+        }
+        if (search_pool.is_full(tmp_dist)) {
             continue;
         }
         is_in_head |= search_pool.insert(cur_neighbor, tmp_dist);
