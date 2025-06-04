@@ -148,8 +148,7 @@ class BucketBuffer {
     }
 
     [[nodiscard]] auto has_next() const -> bool {
-        /* order depends on the order inside `try_promote` */
-        return this->bucket_.has_next() || this->buffer_has_next();
+        return this->buffer_has_next() || this->bucket_.has_next();
     }
 
     void resize(size_t new_size) {
@@ -168,28 +167,28 @@ class BucketBuffer {
         return NOT_FOUND;
     }
 
-    void insert(PID data_id, float dist) {
-        // if (dist < this->bucket_.next_dist()) {
-        //     for (size_t i = this->h_buffer_; i > 0; --i) {
-        //         if (is_checked(this->buffer_[i - 1])) {
-        //             this->buffer_[i - 1] = data_id;
-        //             return;
-        //         }
-        //     }
-        // }
-        this->bucket_.insert(data_id, dist);
+    [[nodiscard]] auto pop_from_bucket() -> PID {
+        return this->bucket_.pop();
     }
 
-    /* TEST: return the number of promoted pids */
-    size_t try_promote() {
-        size_t num_promoted = 0;
+    [[nodiscard]] auto next_id_from_bucket() -> PID {
+        return this->bucket_.next_id();
+    }
+
+    [[nodiscard]] auto bucket_has_next() const -> bool {
+        return this->bucket_.has_next();
+    }
+
+    size_t insert(PID data_id, float dist) {
+        return this->bucket_.insert(data_id, dist);
+    }
+
+    void try_promote() {
         for (size_t i = 0; i < this->h_buffer_; ++i) {
             if (is_checked(this->buffer_[i]) && this->bucket_.has_next()) {
                 this->buffer_[i] = this->bucket_.pop();
-                ++num_promoted;
             }
         }
-        return num_promoted;
     }
     
 };
