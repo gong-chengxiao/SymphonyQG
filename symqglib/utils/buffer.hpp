@@ -148,7 +148,7 @@ class BucketBuffer {
 
     [[nodiscard]] auto has_next() const -> bool {
         /* order is important! */
-        return this->buffer_has_next() || this->bucket_.has_next();
+        return this->bucket_.has_next() || this->buffer_has_next();
     }
 
     void resize(size_t new_size) {
