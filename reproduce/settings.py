@@ -2,7 +2,7 @@ ROUND = 5   # round of testing query
 TOPK = 10   # knn
 EF = 400    # EF for indexing
 
-datasets_dir = "/home/ass/anns/data"
+datasets_dir = "/mnt/hole/ass/anns/data"
 
 datasets = {
     "sift": "l2",

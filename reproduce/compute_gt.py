@@ -5,7 +5,7 @@ from settings import datasets_dir
 from multiprocessing import Pool, shared_memory
 import os
 
-datasets = ["gist", "msong"]
+datasets = ["imagenet"]
 dis_type = "l2"
 
 def compute_gt_single_query(args):
