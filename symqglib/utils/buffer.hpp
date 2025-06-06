@@ -55,11 +55,7 @@ class SearchBuffer {
         // t2 = std::chrono::high_resolution_clock::now();
         // ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
         // std::cout << ss.str() << std::endl;
-        if (lo == cur_) {
-            // return 1 if the new data point is in the head of the buffer
-            return 1;
-        }
-        return 0;
+        return static_cast<size_t>(lo == cur_);
     }
 
     [[nodiscard]] auto is_full(float dist) const -> bool {
