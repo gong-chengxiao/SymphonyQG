@@ -214,6 +214,10 @@ class Strip {
         scanner_pos_(0),
         pids_(length) {
             dist_ = new float[size_];
+            
+            if ((length_ & (length_ - 1)) != 0) {
+                throw std::runtime_error("length_ is not power of 2");
+            }
         }
     
     ~Strip() {
@@ -233,21 +237,19 @@ class Strip {
         return stalled;
     }
 
-    void set_collected() {
-        collector_pos_++;
+    /* set collected and return true if collector may be stalled by scanner in next round */
+    bool set_collected() {
+        bool stalled = ((collector_pos_ + 1) & (length_ - 1)) == (scanner_pos_ & (length_ - 1));
+        collector_pos_ += static_cast<size_t>(!stalled);
+        return stalled;
     }
 
     [[nodiscard]] float* get_scanner() {
         return dist_ + (scanner_pos_ & (length_ - 1)) * w_;
     }
 
-    [[nodiscard]] std::pair<PID, float*> try_get_collector() {
-        if (collector_pos_ < scanner_pos_) {
-            return std::make_pair(pids_[collector_pos_ & (length_ - 1)], dist_ + (collector_pos_ & (length_ - 1)) * w_);
-        } else if (collector_pos_ == scanner_pos_) {
-            return std::make_pair(NOT_FOUND, nullptr);
-        }
-        throw std::runtime_error("collector_pos_ > scanner_pos_");
+    [[nodiscard]] std::pair<PID, float*> get_collector() {
+        return std::make_pair(pids_[collector_pos_ & (length_ - 1)], dist_ + (collector_pos_ & (length_ - 1)) * w_);
     }
 };
 
