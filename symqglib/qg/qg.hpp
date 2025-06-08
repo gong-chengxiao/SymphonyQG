@@ -22,8 +22,8 @@
 #include "./qg_query.hpp"
 #include "./qg_scanner.hpp"
 
-#define COLLECTOR_SCAN
-#define SCANNER_COLLECT
+// #define COLLECTOR_SCAN
+// #define SCANNER_COLLECT
 
 namespace symqg {
 /**
@@ -454,19 +454,17 @@ inline void QuantizedGraph::search_qg_parallel(
     is_search_finished_.store(false, std::memory_order_release);
     #pragma omp parallel num_threads(2)
     {
-        #pragma omp single
+        #pragma omp sections
         {
-            #pragma omp task
+            #pragma omp section
             {
                 scanner_task(q_obj, pre_discard_dist_threshold);
             }
 
-            #pragma omp task
+            #pragma omp section
             {
                 collector_task(q_obj, pre_discard_dist_threshold);
             }
-
-            #pragma omp taskwait
         }
     }
 
@@ -544,20 +542,24 @@ inline void QuantizedGraph::scanner_task(
                     new_factor,
                     pre_discard_dist_threshold
                 );
+
                 result_pool_.insert(new_node, new_sqr_y);
                 stalled = strip_.set_scanned(new_node);
                 if (stalled) {
                     /* TODO: */
+                    std::cerr << "scanner still stalled after one scanner-collect!" << std::endl;
                     throw std::runtime_error("scanner still stalled after one scanner-collect!");
                 }
             } else if (strip_.set_scanned(cur_node)) {
                 /* TODO: */
+                std::cerr << "scanner still stalled since all last neighbors are skipped!" << std::endl;
                 throw std::runtime_error("scanner still stalled since all last neighbors are skipped!");
             }
         }
 #else
-        while(strip_.set_scanned(cur_node))
-            ;
+        while(strip_.set_scanned(cur_node)) {
+            std::atomic_thread_fence(std::memory_order_acquire);
+        }
 #endif
         /* pre-discard */
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
@@ -583,8 +585,6 @@ inline void QuantizedGraph::collector_task(
 
     while (!is_search_finished_.load(std::memory_order_acquire)) {
         // auto t1 = std::chrono::high_resolution_clock::now();
-        // this->num_try_collect_++;
-        // this->num_collected_++;
 
         std::pair<PID, float*> pair = strip_.get_collector();
         const PID cur_node = pair.first;
@@ -662,8 +662,9 @@ inline void QuantizedGraph::collector_task(
             bucket_buffer_.try_promote();
         }
 #else
-        while (strip_.set_collected())
-            ;
+        while (strip_.set_collected() && !is_search_finished_.load(std::memory_order_acquire)){
+            bucket_buffer_.try_promote();
+        }
 #endif
 
         // auto t1 = std::chrono::high_resolution_clock::now();

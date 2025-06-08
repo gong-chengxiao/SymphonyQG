@@ -215,7 +215,7 @@ class Strip {
         length_(length),
         size_(w_ * length_),
         collector_pos_(0),
-        scanner_pos_(0),
+        scanner_pos_(1),
         pids_(length) {
             dist_ = new float[size_];
             std::fill(dist_, dist_ + size_, 0);
@@ -233,8 +233,8 @@ class Strip {
     }
 
     void clear() {
-        this->collector_pos_ = 1;
-        this->scanner_pos_ = 0;
+        this->collector_pos_ = 0;
+        this->scanner_pos_ = 1;
         std::fill(dist_, dist_ + size_, 0);
     }
 
@@ -243,6 +243,8 @@ class Strip {
         pids_[scanner_pos_ & (length_ - 1)] = pid;
         bool stalled = ((scanner_pos_ + 1) & (length_ - 1)) == (collector_pos_ & (length_ - 1));
         scanner_pos_ += static_cast<size_t>(!stalled);
+        // std::cout << (scanner_pos_ & (length_ - 1)) << ","
+        //           << (collector_pos_ & (length_ - 1)) << "\t";
         return stalled;
     }
 
