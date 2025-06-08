@@ -129,6 +129,10 @@ class BucketBuffer {
             this->bucket_ = SearchBuffer(this->h_bucket_);
             this->buffer_ = std::vector<PID>(this->h_buffer_);
 
+            if ((this->h_buffer_ & (this->h_buffer_ - 1)) != 0) {
+                throw std::runtime_error("h_buffer_ is not power of 2");
+            }
+
             for (size_t i = 0; i < this->h_buffer_; ++i) {
                 this->buffer_[i] = NOT_FOUND;
             }
@@ -214,9 +218,13 @@ class Strip {
         scanner_pos_(0),
         pids_(length) {
             dist_ = new float[size_];
+            std::fill(dist_, dist_ + size_, 0);
             
             if ((length_ & (length_ - 1)) != 0) {
                 throw std::runtime_error("length_ is not power of 2");
+            }
+            if (length_ < 2) {
+                throw std::runtime_error("length_ must be greater than 1");
             }
         }
     
@@ -225,8 +233,9 @@ class Strip {
     }
 
     void clear() {
-        this->collector_pos_ = 0;
+        this->collector_pos_ = 1;
         this->scanner_pos_ = 0;
+        std::fill(dist_, dist_ + size_, 0);
     }
 
     /* set scanned and return true if scanner may be stalled by collector in next round */

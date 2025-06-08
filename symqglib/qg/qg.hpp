@@ -517,7 +517,7 @@ inline void QuantizedGraph::scanner_task(
             for (uint32_t i = 0; i < degree_bound_; ++i) {
                 PID cur_neighbor = ptr_nb[i];
                 float tmp_dist = appro_dist[i];
-                if (visited_.get(cur_neighbor)) {
+                if (tmp_dist == 0 || visited_.get(cur_neighbor)) {
                     continue;
                 }
                 local_search_queue.push(Candidate<float>(cur_neighbor, tmp_dist));
@@ -546,9 +546,13 @@ inline void QuantizedGraph::scanner_task(
                 );
                 result_pool_.insert(new_node, new_sqr_y);
                 stalled = strip_.set_scanned(new_node);
+                if (stalled) {
+                    /* TODO: */
+                    throw std::runtime_error("scanner still stalled after one scanner-collect!");
+                }
             } else if (strip_.set_scanned(cur_node)) {
                 /* TODO: */
-                throw std::runtime_error("scanner still stalled since all last neighbors are visited!");
+                throw std::runtime_error("scanner still stalled since all last neighbors are skipped!");
             }
         }
 #else
@@ -631,7 +635,6 @@ inline void QuantizedGraph::collector_task(
             float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
             const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
             const auto* factor = &cur_data[factor_offset_];
-            float* appro_dist = strip_.get_scanner();
             this->scanner_.scan_neighbors_with_pre_discard(
                 appro_dist,
                 q_obj.lut().data(),
