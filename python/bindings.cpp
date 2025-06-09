@@ -66,6 +66,10 @@ struct Index {
 
     void set_ef(size_t ef_search) const { index->set_ef(ef_search); }
 
+    void set_buffer_size(size_t buffer_size) const { index->set_buffer_size(buffer_size); }
+
+    void set_strip_length(size_t length) const { index->set_strip_length(length); }
+
     void build_index(
         const py::object& data,
         size_t ef_indexing,
@@ -113,6 +117,8 @@ PYBIND11_MODULE(symphonyqg, m) {
         .def("load", &Index::load, py::arg("filename"))
         .def("save", &Index::save, py::arg("filename"))
         .def("set_ef", &Index::set_ef, py::arg("EF"))
+        .def("set_buffer_size", &Index::set_buffer_size, py::arg("buffer_size"))
+        .def("set_strip_length", &Index::set_strip_length, py::arg("length"))
         .def(
             "build_index",
             &Index::build_index,

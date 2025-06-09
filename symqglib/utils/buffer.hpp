@@ -61,6 +61,15 @@ class SearchBuffer {
         return static_cast<size_t>(cur_ == lo);
     }
 
+    size_t insert(Candidate<float> candidate) {
+        size_t lo = binary_search(candidate.distance);
+        std::memmove(&data_[lo + 1], &data_[lo], (size_ - lo) * sizeof(Candidate<float>));
+        data_[lo] = candidate;
+        size_ += static_cast<size_t>(size_ < capacity_);
+        cur_ = lo < cur_ ? lo : cur_;
+        return static_cast<size_t>(cur_ == lo);
+    }
+
     [[nodiscard]] auto is_full(float dist) const -> bool {
         return size_ == capacity_ && dist > data_[size_ - 1].distance;
     }
@@ -127,14 +136,10 @@ class BucketBuffer {
           h_buffer_(h_buffer)
         {
             this->bucket_ = SearchBuffer(this->h_bucket_);
-            this->buffer_ = std::vector<PID>(this->h_buffer_);
+            this->buffer_ = std::vector<PID>(this->h_buffer_, NOT_FOUND);
 
             if ((this->h_buffer_ & (this->h_buffer_ - 1)) != 0) {
                 throw std::runtime_error("h_buffer_ is not power of 2");
-            }
-
-            for (size_t i = 0; i < this->h_buffer_; ++i) {
-                this->buffer_[i] = NOT_FOUND;
             }
         }
 
@@ -158,6 +163,11 @@ class BucketBuffer {
     void resize(size_t new_size) {
         this->h_bucket_ = new_size;
         this->bucket_.resize(this->h_bucket_);
+    }
+
+    void resize_buffer(size_t new_size) {
+        this->buffer_ = std::vector<PID>(new_size, NOT_FOUND);
+        this->h_buffer_ = new_size;
     }
     
     PID try_pop() {
@@ -187,6 +197,10 @@ class BucketBuffer {
         return this->bucket_.insert(data_id, dist);
     }
 
+    size_t insert(Candidate<float> candidate) {
+        return this->bucket_.insert(candidate);
+    }
+
     void try_promote() {
         for (size_t i = 0; i < this->h_buffer_; ++i) {
             if (is_checked(this->buffer_[i]) && this->bucket_.has_next()) {
@@ -199,69 +213,64 @@ class BucketBuffer {
 
 class Strip {
    private:
-    float* dist_;
-    size_t w_;          /* mininal operation width ( == max_degree) */
+    size_t w_ = 8;          /* align candidates to cache line (cacheline=64B, size(Candidate<float>)=8B) */
     size_t length_;
-    size_t size_;       /* size of dist_ == w_ * length_ */
-    size_t collector_pos_;  /* collector position in `pids_`. all pids before collector_pos_ are collected */
+    size_t collector_pos_;  /* collector position in `pids_`. all pids before collector_pos_
+                               are collected */
     size_t scanner_pos_;    /* scanner position in `pids_` */
-    std::vector<PID> pids_;
+    std::vector<Candidate<float>, memory::AlignedAllocator<Candidate<float>>> candidates_;
 
    public:
     Strip() = default;
 
-    explicit Strip(size_t w_, size_t length)
-        : w_(w_), 
-        length_(length),
-        size_(w_ * length_),
-        collector_pos_(0),
-        scanner_pos_(1),
-        pids_(length) {
-            dist_ = new float[size_];
-            std::fill(dist_, dist_ + size_, 0);
-            
-            if ((length_ & (length_ - 1)) != 0) {
-                throw std::runtime_error("length_ is not power of 2");
+    explicit Strip(size_t length)
+        : length_(length), collector_pos_(0), scanner_pos_(w_), candidates_(length) {
+            if ((length_ & (w_ - 1)) != 0) {
+                std::cerr << "length_ is not multiple of w_" << std::endl;
+                throw std::runtime_error("length_ is not multiple of w_");
             }
             if (length_ < 2) {
+                std::cerr << "length_ must be greater than 1" << std::endl;
                 throw std::runtime_error("length_ must be greater than 1");
             }
+            std::fill(candidates_.begin(), candidates_.end(), Candidate<float>(0, 0));
         }
-    
-    ~Strip() {
-        delete[] dist_;
-    }
 
     void clear() {
         this->collector_pos_ = 0;
-        this->scanner_pos_ = 1;
-        std::fill(dist_, dist_ + size_, 0);
+        this->scanner_pos_ = w_;
+        std::fill(candidates_.begin(), candidates_.end(), Candidate<float>(0, 0));
     }
 
-    /* set scanned and return true if scanner may be stalled by collector in next round */
-    bool set_scanned(PID pid) {
-        pids_[scanner_pos_ & (length_ - 1)] = pid;
-        bool stalled = ((scanner_pos_ + 1) & (length_ - 1)) == (collector_pos_ & (length_ - 1));
+    void resize(size_t new_length) {
+        if (new_length < 2) {
+            std::cerr << "length_ must be greater than 1" << std::endl;
+            throw std::runtime_error("length_ must be greater than 1");
+        }
+        if ((new_length & (w_ - 1)) != 0) {
+            std::cerr << "length_ is not multiple of w_" << std::endl;
+            throw std::runtime_error("length_ is not multiple of w_");
+        }
+
+        this->length_ = new_length;
+        this->candidates_ = std::vector<Candidate<float>, memory::AlignedAllocator<Candidate<float>>>(new_length, Candidate<float>(0, 0));
+    }
+
+    /* put a candidate into strip, return false if strip may be full in next round */
+    bool put(PID pid, float dist) {
+        candidates_[scanner_pos_ & (length_ - 1)] = Candidate<float>(pid, dist);
+        bool stalled = ((scanner_pos_ + 1) & ~(w_ - 1)) == (collector_pos_ & ~(w_ - 1));
         scanner_pos_ += static_cast<size_t>(!stalled);
-        // std::cout << (scanner_pos_ & (length_ - 1)) << ","
-        //           << (collector_pos_ & (length_ - 1)) << "\t";
-        return stalled;
+        return !stalled;
     }
 
-    /* set collected and return true if collector may be stalled by scanner in next round */
-    bool set_collected() {
-        bool stalled = ((collector_pos_ + 1) & (length_ - 1)) == (scanner_pos_ & (length_ - 1));
+    /* retrieve a candidate from strip, return false if strip may be empty in next round */
+    [[nodiscard]] auto retrieve() -> Candidate<float> {
+        bool stalled = ((collector_pos_ + 1) & ~(w_ - 1)) == (scanner_pos_ & ~(w_ - 1));
         collector_pos_ += static_cast<size_t>(!stalled);
-        return stalled;
+        return stalled ? Candidate<float>(0, 0) : candidates_[collector_pos_ & (length_ - 1)];
     }
 
-    [[nodiscard]] float* get_scanner() {
-        return dist_ + (scanner_pos_ & (length_ - 1)) * w_;
-    }
-
-    [[nodiscard]] std::pair<PID, float*> get_collector() {
-        return std::make_pair(pids_[collector_pos_ & (length_ - 1)], dist_ + (collector_pos_ & (length_ - 1)) * w_);
-    }
 };
 
 // sorted linear buffer to store search results
