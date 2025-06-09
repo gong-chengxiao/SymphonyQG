@@ -58,16 +58,16 @@ class SearchBuffer {
         return static_cast<size_t>(lo == cur_);
     }
 
-    void insert_with_birthday(PID data_id, float dist, size_t birthday) {
-        size_t lo = binary_search(dist);
-        std::memmove(&data_[lo + 1], &data_[lo], (size_ - lo) * sizeof(Candidate<float>));
-        // if (size_ == capacity_) {
-        //     std::cout << data_[size_].birthday << ',';
-        // }
-        data_[lo] = Candidate<float>(data_id, dist, birthday);
-        size_ += static_cast<size_t>(size_ < capacity_);
-        cur_ = lo < cur_ ? lo : cur_;
-    }
+    // void insert_with_birthday(PID data_id, float dist, size_t birthday) {
+    //     size_t lo = binary_search(dist);
+    //     std::memmove(&data_[lo + 1], &data_[lo], (size_ - lo) * sizeof(Candidate<float>));
+    //     // if (size_ == capacity_) {
+    //     //     std::cout << data_[size_].birthday << ',';
+    //     // }
+    //     data_[lo] = Candidate<float>(data_id, dist, birthday);
+    //     size_ += static_cast<size_t>(size_ < capacity_);
+    //     cur_ = lo < cur_ ? lo : cur_;
+    // }
 
     [[nodiscard]] auto is_full(float dist) const -> bool {
         return size_ == capacity_ && dist > data_[size_ - 1].distance;
@@ -76,7 +76,7 @@ class SearchBuffer {
     // get closest unchecked data point
     PID pop() {
         PID cur_id = data_[cur_].id;
-        std::cout << data_[cur_].birthday << ',';
+        // std::cout << data_[cur_].birthday << ',';
         set_checked(data_[cur_].id);
         ++cur_;
         while (cur_ < size_ && is_checked(data_[cur_].id)) {
@@ -99,6 +99,10 @@ class SearchBuffer {
         data_ = std::vector<Candidate<float>, memory::AlignedAllocator<Candidate<float>>>(
             capacity_ + 1
         );
+    }
+
+    void resize_dynamic(size_t new_size) {
+        this->capacity_ = new_size;
     }
 };
 

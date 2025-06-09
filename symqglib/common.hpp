@@ -29,11 +29,11 @@ template <typename T>
 struct Candidate {
     PID id;
     T distance;
-    size_t birthday;
+    // size_t birthday;
 
     Candidate() = default;
     explicit Candidate(PID vec_id, T dis) : id(vec_id), distance(dis) {}
-    explicit Candidate(PID vec_id, T dis, size_t birth) : id(vec_id), distance(dis), birthday(birth) {}
+    // explicit Candidate(PID vec_id, T dis, size_t birth) : id(vec_id), distance(dis), birthday(birth) {}
 
     auto operator<(const Candidate& other) const { return distance < other.distance; }
 
