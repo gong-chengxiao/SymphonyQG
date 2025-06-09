@@ -338,7 +338,7 @@ inline void QuantizedGraph::search_qg(
     /* Current version of fast scan compute 32 distances */
     std::vector<float> appro_dist(degree_bound_);  // approximate dis
 
-    search_pool_.resize_dynamic(5);
+    search_pool_.resize_dynamic(std::max<size_t>(10, ef_ >> 6));
 
     while (search_pool_.has_next()) {
 #if defined(DEBUG)
@@ -353,7 +353,7 @@ inline void QuantizedGraph::search_qg(
             continue;
         }
         num_iter_++;
-        if (num_iter_ == 5) {
+        if (num_iter_ == std::max<size_t>(10, ef_ >> 6)) {
             search_pool_.resize_dynamic(ef_);
         }
 
