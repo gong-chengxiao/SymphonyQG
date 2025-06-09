@@ -46,7 +46,7 @@ class QuantizedGraph {
     size_t padded_dim_ = 0;    // padded dimension
     PID entry_point_ = 0;      // Entry point of graph
 
-    mutable size_t scan_count_;
+    mutable size_t num_iter_;
     // mutable size_t scanner_pop_time_, scanner_scan_time_, scanner_l2_sqr_time_, scanner_insert_result_time_;
     // mutable size_t collector_insert_time_;
     // mutable size_t collector_num_try_insert_, collector_num_pure_insert_;
@@ -247,8 +247,8 @@ inline void QuantizedGraph::load_index(const char* filename) {
 
 inline void QuantizedGraph::set_ef(size_t cur_ef) {
     this->search_pool_.resize(cur_ef);
-    this->compute_times_ = new size_t[cur_ef << 1];
-    this->insert_times_ = new size_t[cur_ef << 1];
+    // this->compute_times_ = new size_t[cur_ef << 1];
+    // this->insert_times_ = new size_t[cur_ef << 1];
     this->visited_ = HashBasedBooleanSet(std::min(this->num_points_ / 10, cur_ef * cur_ef));
 }
 
@@ -262,7 +262,7 @@ inline void QuantizedGraph::search(
     this->visited_.clear();
     this->search_pool_.clear();
 
-    scan_count_ = 0;
+    num_iter_ = 0;
     // scanner_l2_sqr_time_ = 0;
     // scanner_scan_time_ = 0;
     // scanner_pop_time_ = 0;
@@ -285,22 +285,22 @@ inline void QuantizedGraph::search(
 #if defined(DEBUG)
     auto t_end = std::chrono::high_resolution_clock::now();
     std::cout << "-----------------------------------------------------------" << std::endl;
-    std::cout << "[master] total time:              " << std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_start).count() << " ns\t" << scan_count_ << std::endl;
-    std::cout << "[master] num_scann, num_collect:  " << scan_count_ << ", " << scan_count_ << std::endl;
-    std::cout << "[scanner] pop:                    " << scanner_pop_time_ << " ns\t" << scanner_pop_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
-    std::cout << "[scanner] l2_sqr:                 " << scanner_l2_sqr_time_ << " ns\t" << scanner_l2_sqr_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
-    std::cout << "[scanner] scan:                   " << scanner_scan_time_ << " ns\t" << scanner_scan_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
-    std::cout << "[scanner] insert result:          " << scanner_insert_result_time_ << " ns\t" << scanner_insert_result_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
-    std::cout << "[collector] insert:               " << collector_insert_time_ << " ns\t" << collector_insert_time_ / scan_count_ << " ns\t" << scan_count_ << std::endl;
+    std::cout << "[master] total time:              " << std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_start).count() << " ns\t" << num_iter_ << std::endl;
+    std::cout << "[master] num_scann, num_collect:  " << num_iter_ << ", " << num_iter_ << std::endl;
+    std::cout << "[scanner] pop:                    " << scanner_pop_time_ << " ns\t" << scanner_pop_time_ / num_iter_ << " ns\t" << num_iter_ << std::endl;
+    std::cout << "[scanner] l2_sqr:                 " << scanner_l2_sqr_time_ << " ns\t" << scanner_l2_sqr_time_ / num_iter_ << " ns\t" << num_iter_ << std::endl;
+    std::cout << "[scanner] scan:                   " << scanner_scan_time_ << " ns\t" << scanner_scan_time_ / num_iter_ << " ns\t" << num_iter_ << std::endl;
+    std::cout << "[scanner] insert result:          " << scanner_insert_result_time_ << " ns\t" << scanner_insert_result_time_ / num_iter_ << " ns\t" << num_iter_ << std::endl;
+    std::cout << "[collector] insert:               " << collector_insert_time_ << " ns\t" << collector_insert_time_ / num_iter_ << " ns\t" << num_iter_ << std::endl;
     std::cout << "[collector] num_insert(try):      " << (float)collector_num_pure_insert_ / collector_num_try_insert_ << "\t\t" << collector_num_pure_insert_ << '(' << collector_num_try_insert_<< ')' << std::endl;
 #endif
     // std::cout << "SymphonyQG," << collector_insert_branch_time_ << "," << collector_insert_branch_time_ / collector_num_try_insert_ << "," << collector_num_try_insert_ << std::endl;
     // std::cout << "SymphonyQG," << collector_pure_insert_time_ << "," << collector_pure_insert_time_ / collector_num_pure_insert_ << "," << collector_num_pure_insert_ << std::endl;
-    // std::cout << "SymphonyQG," << collector_insert_time_ << "," << collector_insert_time_ / scan_count_ << "," << scan_count_ << std::endl;
+    // std::cout << "SymphonyQG," << collector_insert_time_ << "," << collector_insert_time_ / num_iter_ << "," << num_iter_ << std::endl;
     // std::cout << "SymphonyQG," << collector_num_pure_insert_ << "," << (float)collector_num_pure_insert_ / collector_num_try_insert_ << "," << collector_num_try_insert_ << std::endl;
 
     /* time cost by step by dimensions */
-    // std::cout << "SymphonyQG," << dimension_ << "," << compute_time_ << "," << insert_time_ << "," << compute_time_ / scan_count_ << "," << insert_time_ / scan_count_ << "," << scan_count_ << std::endl;
+    // std::cout << "SymphonyQG," << dimension_ << "," << compute_time_ << "," << insert_time_ << "," << compute_time_ / num_iter_ << "," << insert_time_ / num_iter_ << "," << num_iter_ << std::endl;
 
     // for (size_t i = 0; i < compute_time_pos_; ++i) {
     //     std::cout << compute_times_[i] << ",";
@@ -363,7 +363,7 @@ inline void QuantizedGraph::search_qg(
 #endif
             continue;
         }
-        scan_count_++;
+        num_iter_++;
         // auto t1 = std::chrono::high_resolution_clock::now();
         visited_.set(cur_node);
         const float* cur_data = get_vector(cur_node);
@@ -431,7 +431,7 @@ inline void QuantizedGraph::search_qg(
             }
             // collector_num_pure_insert_++;
             // auto t1 = std::chrono::high_resolution_clock::now();
-            search_pool_.insert(cur_neighbor, tmp_dist);
+            search_pool_.insert_with_birthday(cur_neighbor, tmp_dist, num_iter_);
             // num_inserted++;
             // auto t2 = std::chrono::high_resolution_clock::now();
             // collector_insert_branch_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
@@ -442,19 +442,22 @@ inline void QuantizedGraph::search_qg(
                 reinterpret_cast<const char*>(get_vector(search_pool_.next_id())), 10
             );
         }
-        // insert_times_[insert_time_pos_++] = num_visited; // borrow from insert_times_ to record num_visited
-        // insert_times_[insert_time_pos_++] = num_too_far;   // borrow from insert_times_ to record num_too_far
-        // insert_times_[insert_time_pos_++] = num_nearest;   // borrow from insert_times_ to record num_nearest
-        // insert_times_[insert_time_pos_++] = num_inserted;    // borrow from insert_times_ to record num_inserted
-        // auto t2 = std::chrono::high_resolution_clock::now();
-        // t2 = std::chrono::high_resolution_clock::now();
-        // insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
-        // insert_times_[insert_time_pos_++] = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+        // insert_times_[insert_time_pos_++] = num_visited; // borrow from insert_times_ to
+        // record num_visited insert_times_[insert_time_pos_++] = num_too_far;   // borrow
+        // from insert_times_ to record num_too_far insert_times_[insert_time_pos_++] =
+        // num_nearest;   // borrow from insert_times_ to record num_nearest
+        // insert_times_[insert_time_pos_++] = num_inserted;    // borrow from insert_times_
+        // to record num_inserted auto t2 = std::chrono::high_resolution_clock::now(); t2 =
+        // std::chrono::high_resolution_clock::now(); insert_time_ +=
+        // std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+        // insert_times_[insert_time_pos_++] =
+        // std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #if defined(DEBUG)
         auto t2 = std::chrono::high_resolution_clock::now();
         collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #endif
     }
+    std::cout << std::endl;
 
     update_results(res_pool, query);
     res_pool.copy_results(results);
@@ -472,7 +475,7 @@ inline float QuantizedGraph::scan_neighbors(
     // timespec u1, u2;
     // int64_t cpu_time = 0;
     // uint64_t wall_time;
-    scan_count_++;
+    num_iter_++;
 
     // auto t1 = std::chrono::high_resolution_clock::now();
     // clock_gettime(RUSAGE_SELF, &u1);
