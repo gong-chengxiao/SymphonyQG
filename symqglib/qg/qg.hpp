@@ -47,14 +47,17 @@ class QuantizedGraph {
     PID entry_point_ = 0;      // Entry point of graph
     size_t ef_ = 0;
 
+    size_t init_ef_ = 0;
+    size_t num_inserted_threshold_ = 0;
+
     mutable size_t num_iter_;
     // mutable size_t scanner_pop_time_, scanner_scan_time_, scanner_l2_sqr_time_, scanner_insert_result_time_;
     // mutable size_t collector_insert_time_;
     // mutable size_t collector_num_try_insert_, collector_num_pure_insert_;
     // mutable size_t collector_insert_branch_time_;
     // mutable size_t collector_pure_insert_time_;
-    // mutable size_t *compute_times_, *insert_times_;
-    // mutable size_t compute_time_pos_, insert_time_pos_;
+    mutable size_t *compute_times_, *insert_times_;
+    mutable size_t compute_time_pos_, insert_time_pos_;
     // mutable size_t compute_time_, insert_time_;
 
     // mutable size_t num_is_in_head_;
@@ -163,6 +166,10 @@ class QuantizedGraph {
 
     void load_index(const char*);
 
+    void set_init_ef(size_t);
+
+    void set_num_inserted_threshold(size_t);
+
     void set_ef(size_t);
 
     /* search and copy results to KNN */
@@ -246,11 +253,19 @@ inline void QuantizedGraph::load_index(const char* filename) {
     std::cout << "Quantized graph loaded!\n";
 }
 
+inline void QuantizedGraph::set_init_ef(size_t cur_ef) {
+    this->init_ef_ = cur_ef;
+}
+
+inline void QuantizedGraph::set_num_inserted_threshold(size_t cur_threshold) {
+    this->num_inserted_threshold_ = cur_threshold;
+}
+
 inline void QuantizedGraph::set_ef(size_t cur_ef) {
     this->search_pool_.resize(cur_ef);
     this->ef_ = cur_ef;
-    // this->compute_times_ = new size_t[cur_ef << 1];
-    // this->insert_times_ = new size_t[cur_ef << 1];
+    this->compute_times_ = new size_t[cur_ef << 1];
+    this->insert_times_ = new size_t[cur_ef << 1];
     this->visited_ = HashBasedBooleanSet(std::min(this->num_points_ / 10, cur_ef * cur_ef));
 }
 
@@ -275,8 +290,8 @@ inline void QuantizedGraph::search(
     // collector_insert_branch_time_ = 0;
     // collector_pure_insert_time_ = 0;
 
-    // compute_time_pos_ = 0;
-    // insert_time_pos_ = 0;
+    compute_time_pos_ = 0;
+    insert_time_pos_ = 0;
     // compute_time_ = 0;
     // insert_time_ = 0;
 
@@ -338,7 +353,7 @@ inline void QuantizedGraph::search_qg(
     /* Current version of fast scan compute 32 distances */
     std::vector<float> appro_dist(degree_bound_);  // approximate dis
 
-    search_pool_.resize_dynamic(std::max<size_t>(10, ef_ >> 6));
+    // search_pool_.resize_dynamic(init_ef_);
 
     while (search_pool_.has_next()) {
 #if defined(DEBUG)
@@ -352,10 +367,7 @@ inline void QuantizedGraph::search_qg(
 #endif
             continue;
         }
-        num_iter_++;
-        if (num_iter_ == std::max<size_t>(10, ef_ >> 6)) {
-            search_pool_.resize_dynamic(ef_);
-        }
+        // num_iter_++;
 
         // auto t1 = std::chrono::high_resolution_clock::now();
         visited_.set(cur_node);
@@ -435,16 +447,17 @@ inline void QuantizedGraph::search_qg(
                 reinterpret_cast<const char*>(get_vector(search_pool_.next_id())), 10
             );
         }
-        // insert_times_[insert_time_pos_++] = num_visited; // borrow from insert_times_ to
-        // record num_visited insert_times_[insert_time_pos_++] = num_too_far;   // borrow
-        // from insert_times_ to record num_too_far insert_times_[insert_time_pos_++] =
-        // num_nearest;   // borrow from insert_times_ to record num_nearest
-        // insert_times_[insert_time_pos_++] = num_inserted;    // borrow from insert_times_
-        // to record num_inserted auto t2 = std::chrono::high_resolution_clock::now(); t2 =
-        // std::chrono::high_resolution_clock::now(); insert_time_ +=
-        // std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
-        // insert_times_[insert_time_pos_++] =
-        // std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+        // if (num_inserted < num_inserted_threshold_) {
+        //     search_pool_.resize_dynamic(ef_);
+        // }
+        // insert_times_[insert_time_pos_++] = num_visited; // borrow from insert_times_ to record num_visited 
+        // insert_times_[insert_time_pos_++] = num_too_far;   // borrow from insert_times_ to record num_too_far 
+        // insert_times_[insert_time_pos_++] = num_nearest;   // borrow from insert_times_ to record num_nearest
+        // insert_times_[insert_time_pos_++] = num_inserted;    // borrow from insert_times_ to record num_inserted 
+        // auto t2 = std::chrono::high_resolution_clock::now(); 
+        // t2 = std::chrono::high_resolution_clock::now(); 
+        // insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+        // insert_times_[insert_time_pos_++] = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #if defined(DEBUG)
         auto t2 = std::chrono::high_resolution_clock::now();
         collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();

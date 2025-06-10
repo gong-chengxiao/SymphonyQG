@@ -66,6 +66,10 @@ struct Index {
 
     void set_ef(size_t ef_search) const { index->set_ef(ef_search); }
 
+    void set_init_ef(size_t ef_init) const { index->set_init_ef(ef_init); }
+
+    void set_num_inserted_threshold(size_t threshold) const { index->set_num_inserted_threshold(threshold); }
+
     void build_index(
         const py::object& data,
         size_t ef_indexing,
@@ -113,6 +117,8 @@ PYBIND11_MODULE(symphonyqg, m) {
         .def("load", &Index::load, py::arg("filename"))
         .def("save", &Index::save, py::arg("filename"))
         .def("set_ef", &Index::set_ef, py::arg("EF"))
+        .def("set_init_ef", &Index::set_init_ef, py::arg("EF"))
+        .def("set_num_inserted_threshold", &Index::set_num_inserted_threshold, py::arg("threshold"))
         .def(
             "build_index",
             &Index::build_index,
