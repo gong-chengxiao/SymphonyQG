@@ -354,7 +354,6 @@ inline void QuantizedGraph::search_qg(
     std::vector<float> appro_dist(degree_bound_);  // approximate dis
 
     // search_pool_.resize_dynamic(init_ef_);
-
     while (search_pool_.has_next()) {
 #if defined(DEBUG)
         auto t1 = std::chrono::high_resolution_clock::now();
@@ -383,8 +382,6 @@ inline void QuantizedGraph::search_qg(
         t1 = std::chrono::high_resolution_clock::now();
         scanner_l2_sqr_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t2).count();
 #endif
-
-        res_pool.insert(cur_node, sqr_y);
 
 #if defined(DEBUG)
         t2 = std::chrono::high_resolution_clock::now();
@@ -462,6 +459,7 @@ inline void QuantizedGraph::search_qg(
         auto t2 = std::chrono::high_resolution_clock::now();
         collector_insert_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 #endif
+        res_pool.insert(cur_node, sqr_y);
     }
 
     update_results(res_pool, query);
@@ -514,18 +512,15 @@ inline float QuantizedGraph::scan_neighbors(
 
     // t1 = std::chrono::high_resolution_clock::now();
     // clock_gettime(RUSAGE_SELF, &u1);
-    uint64_t is_in_head = 0;
+    // uint64_t is_in_head = 0;
     const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
     for (uint32_t i = 0; i < cur_degree; ++i) {
         PID cur_neighbor = ptr_nb[i];
         float tmp_dist = appro_dist[i];
-        if (visited_.get(cur_neighbor)) {
+        if (visited_.get(cur_neighbor) || search_pool.is_full(tmp_dist)) {
             continue;
         }
-        if (search_pool.is_full(tmp_dist)) {
-            continue;
-        }
-        is_in_head |= search_pool.insert(cur_neighbor, tmp_dist);
+        search_pool.insert(cur_neighbor, tmp_dist);
         memory::mem_prefetch_l2(
             reinterpret_cast<const char*>(get_vector(search_pool.next_id())), 10
         );
