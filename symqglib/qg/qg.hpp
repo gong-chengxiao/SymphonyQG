@@ -180,6 +180,8 @@ class QuantizedGraph {
 
     void set_strip_length(size_t length);
 
+    void set_insert_limit(size_t limit);
+
     /* search and copy results to KNN */
     void search(
         const float* __restrict__ query, uint32_t knn, uint32_t* __restrict__ results
@@ -196,7 +198,7 @@ inline QuantizedGraph::QuantizedGraph(size_t num, size_t max_deg, size_t dim)
     , visited_(100)
     , search_pool_(0)
     , result_pool_(0)
-    , strip_(256)
+    , strip_(256, 8)
     , bucket_buffer_(0, 4) {
     initialize();
 }
@@ -272,6 +274,10 @@ inline void QuantizedGraph::set_buffer_size(size_t buffer_size) {
 inline void QuantizedGraph::set_strip_length(size_t length) {
     this->strip_.resize(length);
     this->length_strip_ = length;
+}
+
+inline void QuantizedGraph::set_insert_limit(size_t limit) {
+    this->strip_.set_insert_limit(limit);
 }
 
 inline void QuantizedGraph::set_ef(size_t cur_ef) {
@@ -375,67 +381,68 @@ inline void QuantizedGraph::search_qg_parallel(
     q_obj.query_prepare(rotator_, scanner_);
 
     /* STAGE 1: approach */
+    buckets_prepare(q_obj);
 
     /* Searching pool initialization */
-    bucket_buffer_.insert(this->entry_point_, FLT_MAX);
+    // bucket_buffer_.insert(this->entry_point_, FLT_MAX);
 
     /* Current version of fast scan compute 32 distances */
-    std::vector<float> appro_dist(degree_bound_);
+    // std::vector<float> appro_dist(degree_bound_);
 
     float pre_discard_dist_threshold = FLT_MAX;
     // size_t num_iter = 0;
 
-    while (bucket_buffer_.bucket_has_next()) {
-        size_t num_inserted = 0;
-        // num_iter++;
+    // while (bucket_buffer_.bucket_has_next()) {
+    //     size_t num_inserted = 0;
+    //     // num_iter++;
 
-        PID cur_node = bucket_buffer_.pop_from_bucket();
-        if (visited_.get(cur_node)) {
-            continue;
-        }
-        visited_.set(cur_node);
+    //     PID cur_node = bucket_buffer_.pop_from_bucket();
+    //     if (visited_.get(cur_node)) {
+    //         continue;
+    //     }
+    //     visited_.set(cur_node);
 
-        /* Compute approximate distance by Fast Scan */
-        const float* cur_data = get_vector(cur_node);
-        float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
-        const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
-        const auto* factor = &cur_data[factor_offset_];
-        this->scanner_.scan_neighbors(
-            appro_dist.data(),
-            q_obj.lut().data(),
-            sqr_y,
-            q_obj.lower_val(),
-            q_obj.width(),
-            q_obj.sumq(),
-            packed_code,
-            factor
-        );
+    //     /* Compute approximate distance by Fast Scan */
+    //     const float* cur_data = get_vector(cur_node);
+    //     float sqr_y = space::l2_sqr(q_obj.query_data(), cur_data, dimension_);
+    //     const auto* packed_code = reinterpret_cast<const uint8_t*>(&cur_data[code_offset_]);
+    //     const auto* factor = &cur_data[factor_offset_];
+    //     this->scanner_.scan_neighbors(
+    //         appro_dist.data(),
+    //         q_obj.lut().data(),
+    //         sqr_y,
+    //         q_obj.lower_val(),
+    //         q_obj.width(),
+    //         q_obj.sumq(),
+    //         packed_code,
+    //         factor
+    //     );
 
-        const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
-        for (uint32_t i = 0; i < degree_bound_; ++i) {
-            PID cur_neighbor = ptr_nb[i];
-            float tmp_dist = appro_dist[i];
-            if (visited_.get(cur_neighbor)) {
-                continue;
-            }
-            if (bucket_buffer_.is_full(tmp_dist)) {
-                pre_discard_dist_threshold = std::min(pre_discard_dist_threshold, tmp_dist);
-                // num_too_far_nbrs++;
-                continue;
-            }
-            bucket_buffer_.insert(cur_neighbor, tmp_dist);
-            num_inserted++;
-            memory::mem_prefetch_l2(
-                reinterpret_cast<const char*>(get_vector(bucket_buffer_.next_id_from_bucket())), 10
-            );
-        }
+    //     const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
+    //     for (uint32_t i = 0; i < degree_bound_; ++i) {
+    //         PID cur_neighbor = ptr_nb[i];
+    //         float tmp_dist = appro_dist[i];
+    //         if (visited_.get(cur_neighbor)) {
+    //             continue;
+    //         }
+    //         if (bucket_buffer_.is_full(tmp_dist)) {
+    //             pre_discard_dist_threshold = std::min(pre_discard_dist_threshold, tmp_dist);
+    //             // num_too_far_nbrs++;
+    //             continue;
+    //         }
+    //         bucket_buffer_.insert(cur_neighbor, tmp_dist);
+    //         num_inserted++;
+    //         memory::mem_prefetch_l2(
+    //             reinterpret_cast<const char*>(get_vector(bucket_buffer_.next_id_from_bucket())), 10
+    //         );
+    //     }
 
-        if (num_inserted < 5) {
-            break;
-        }
+    //     if (num_inserted < 5) {
+    //         break;
+    //     }
 
-        result_pool_.insert(cur_node, sqr_y);
-    }
+    //     result_pool_.insert(cur_node, sqr_y);
+    // }
 
     /* Before STAGE 2, fill the buffer */
     bucket_buffer_.try_promote();
@@ -584,7 +591,7 @@ inline void QuantizedGraph::scanner_task(
             }
         }
 #endif
-
+        strip_.clear_scanner_w();
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
         for (uint32_t i = 0; i < degree_bound_; ++i) {
             PID cur_neighbor = ptr_nb[i];
@@ -592,11 +599,15 @@ inline void QuantizedGraph::scanner_task(
                 continue;
             }
             // auto t1 = std::chrono::high_resolution_clock::now();
-            while (!strip_.put(cur_neighbor, appro_dist[i])) {
-                std::atomic_thread_fence(std::memory_order_acquire);
-            }
+            // while (!strip_.put(cur_neighbor, appro_dist[i])) {
+            //     std::atomic_thread_fence(std::memory_order_acquire);
+            // }
+            strip_.insert(cur_neighbor, appro_dist[i]);
             // auto t2 = std::chrono::high_resolution_clock::now();
             // this->scanner_task_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+        }
+        while (!strip_.scan_to_next()) {
+            std::atomic_thread_fence(std::memory_order_acquire);
         }
 
         // auto t2 = std::chrono::high_resolution_clock::now();
@@ -621,6 +632,9 @@ inline void QuantizedGraph::collector_task(
 
         if (candidate.distance == 0) {
             bucket_buffer_.try_promote();
+            continue;
+        }
+        if (candidate.distance == FLT_MAX || bucket_buffer_.is_full(candidate.distance)) {
             continue;
         }
         bucket_buffer_.insert(candidate);

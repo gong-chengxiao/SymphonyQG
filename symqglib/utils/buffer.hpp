@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <vector>
+#include <cfloat>
+#include <bit>
 
 #include "../common.hpp"
 #include "./memory.hpp"
@@ -215,6 +217,7 @@ class Strip {
    private:
     size_t w_ = 8;          /* align candidates to cache line (cacheline=64B, size(Candidate<float>)=8B) */
     size_t length_;
+    size_t insert_limit_;
     size_t collector_pos_;  /* collector position in `pids_`. all pids before collector_pos_
                                are collected */
     size_t scanner_pos_;    /* scanner position in `pids_` */
@@ -223,50 +226,107 @@ class Strip {
    public:
     Strip() = default;
 
-    explicit Strip(size_t length)
-        : length_(length), collector_pos_(0), scanner_pos_(w_), candidates_(length) {
-            if ((length_ & (w_ - 1)) != 0) {
-                std::cerr << "length_ is not multiple of w_" << std::endl;
-                throw std::runtime_error("length_ is not multiple of w_");
+    explicit Strip(size_t length, size_t insert_limit)
+        : length_(length), 
+        insert_limit_(insert_limit), 
+        candidates_(length) {
+            if ((length_ & (length_ - 1)) != 0) {
+                std::cerr << "length_ is not power of 2" << std::endl;
+                throw std::runtime_error("length_ is not power of 2");
             }
             if (length_ < 2) {
                 std::cerr << "length_ must be greater than 1" << std::endl;
                 throw std::runtime_error("length_ must be greater than 1");
             }
+
+            /* w_ is the smallest multiple of 8 that is not less than insert_limit_, */
+            /* and can be divided by length_ */
+            w_ = std::max<size_t>(8u, std::bit_ceil(insert_limit_));
+
+            this->collector_pos_ = 0;
+            this->scanner_pos_ = w_;
+
+            if (length_ % w_ != 0) {
+                std::cerr << "length_ is not multiple of w_" << std::endl;
+                throw std::runtime_error("length_ is not multiple of w_");
+            }
             std::fill(candidates_.begin(), candidates_.end(), Candidate<float>(0, 0));
         }
+
 
     void clear() {
         this->collector_pos_ = 0;
         this->scanner_pos_ = w_;
-        std::fill(candidates_.begin(), candidates_.end(), Candidate<float>(0, 0));
+        std::fill(candidates_.begin(), candidates_.end(), Candidate<float>(0, FLT_MAX));
     }
 
     void resize(size_t new_length) {
+        if ((new_length & (new_length - 1)) != 0) {
+            std::cerr << "new_length is not power of 2" << std::endl;
+            throw std::runtime_error("new_length is not power of 2");
+        }
         if (new_length < 2) {
             std::cerr << "length_ must be greater than 1" << std::endl;
             throw std::runtime_error("length_ must be greater than 1");
         }
-        if ((new_length & (w_ - 1)) != 0) {
+        if (new_length % w_ != 0) {
             std::cerr << "length_ is not multiple of w_" << std::endl;
             throw std::runtime_error("length_ is not multiple of w_");
         }
 
         this->length_ = new_length;
-        this->candidates_ = std::vector<Candidate<float>, memory::AlignedAllocator<Candidate<float>>>(new_length, Candidate<float>(0, 0));
+        this->candidates_ = std::vector<Candidate<float>, memory::AlignedAllocator<Candidate<float>>>(new_length, Candidate<float>(0, FLT_MAX));
+    }
+
+    void set_insert_limit(size_t new_insert_limit) {
+        this->insert_limit_ = new_insert_limit;
+        this->w_ = std::max<size_t>(8u, std::bit_ceil(new_insert_limit));
+
+        this->scanner_pos_ = w_;
+        this->collector_pos_ = 0;
+
+        if (length_ % w_ != 0) {
+            std::cerr << "length_ is not multiple of w_" << std::endl;
+            throw std::runtime_error("length_ is not multiple of w_");
+        }
     }
 
     /* put a candidate into strip, return false if strip may be full in next round */
     bool put(PID pid, float dist) {
         candidates_[scanner_pos_ & (length_ - 1)] = Candidate<float>(pid, dist);
-        bool stalled = ((scanner_pos_ + 1) & ~(w_ - 1)) == (collector_pos_ & ~(w_ - 1));
+        bool stalled = ((scanner_pos_ + 1) & ~(w_ - 1) & (length_ - 1)) == (collector_pos_ & ~(w_ - 1) & (length_ - 1));
         scanner_pos_ += static_cast<size_t>(!stalled);
+        return !stalled;
+    }
+
+    void clear_scanner_w() {
+        std::fill(candidates_.begin() + (scanner_pos_ & (length_ - 1)), candidates_.begin() + (scanner_pos_ & (length_ - 1)) + w_, Candidate<float>(0, FLT_MAX));
+    }
+
+    /* insert a candidate into strip, ensure [0, insert_limit_) is min-first sorted */
+    void insert(PID pid, float dist) {
+        int32_t i = static_cast<int32_t>((scanner_pos_ + insert_limit_ - 1) & (length_ - 1));
+        if (dist >= candidates_[i].distance) {
+            return;
+        }
+        i--;
+        while ((i >= static_cast<int32_t>(scanner_pos_ & (length_ - 1))) && (dist < candidates_[i].distance)) {
+            candidates_[i + 1] = candidates_[i];
+            i--;
+        }
+        candidates_[i + 1] = Candidate<float>(pid, dist);
+    }
+
+    /* move scanner to next w_, return false if scanner may be stalled in next round */
+    bool scan_to_next() {
+        bool stalled = ((scanner_pos_ + w_) & ~(w_ - 1) & (length_ - 1)) == (collector_pos_ & ~(w_ - 1) & (length_ - 1));
+        scanner_pos_ += stalled ? 0 : w_;
         return !stalled;
     }
 
     /* retrieve a candidate from strip, return false if strip may be empty in next round */
     [[nodiscard]] auto retrieve() -> Candidate<float> {
-        bool stalled = ((collector_pos_ + 1) & ~(w_ - 1)) == (scanner_pos_ & ~(w_ - 1));
+        bool stalled = ((collector_pos_ + 1) & ~(w_ - 1) & (length_ - 1)) == (scanner_pos_ & ~(w_ - 1) & (length_ - 1));
         collector_pos_ += static_cast<size_t>(!stalled);
         return stalled ? Candidate<float>(0, 0) : candidates_[collector_pos_ & (length_ - 1)];
     }

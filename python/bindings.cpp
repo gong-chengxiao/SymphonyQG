@@ -70,6 +70,8 @@ struct Index {
 
     void set_strip_length(size_t length) const { index->set_strip_length(length); }
 
+    void set_insert_limit(size_t limit) const { index->set_insert_limit(limit); }
+
     void build_index(
         const py::object& data,
         size_t ef_indexing,
@@ -119,6 +121,7 @@ PYBIND11_MODULE(symphonyqg, m) {
         .def("set_ef", &Index::set_ef, py::arg("EF"))
         .def("set_buffer_size", &Index::set_buffer_size, py::arg("buffer_size"))
         .def("set_strip_length", &Index::set_strip_length, py::arg("length"))
+        .def("set_insert_limit", &Index::set_insert_limit, py::arg("limit"))
         .def(
             "build_index",
             &Index::build_index,
