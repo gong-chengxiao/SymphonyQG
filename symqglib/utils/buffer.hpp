@@ -12,6 +12,7 @@ class SearchBuffer {
    private:
     std::vector<Candidate<float>, memory::AlignedAllocator<Candidate<float>>> data_;
     size_t size_ = 0, cur_ = 0, capacity_;
+    size_t population_ = 0;
 
     [[nodiscard]] auto binary_search(float dist) const {
         size_t lo = 0;
@@ -36,25 +37,16 @@ class SearchBuffer {
 
     explicit SearchBuffer(size_t capacity) : data_(capacity + 1), capacity_(capacity) {}
 
+    size_t population() const { return population_; }
+
     // insert a data point into buffer
     size_t insert(PID data_id, float dist) {
-        // auto t1 = std::chrono::high_resolution_clock::now();
         size_t lo = binary_search(dist);
-        // auto t2 = std::chrono::high_resolution_clock::now();
-        // std::stringstream ss;
-        // ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
-        // t1 = std::chrono::high_resolution_clock::now();
         std::memmove(&data_[lo + 1], &data_[lo], (size_ - lo) * sizeof(Candidate<float>));
-        // t2 = std::chrono::high_resolution_clock::now();
-        // ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()
-        //    << " ns\t" << lo << "\t" << size_ << "\t";
-        // t1 = std::chrono::high_resolution_clock::now();
         data_[lo] = Candidate<float>(data_id, dist);
         size_ += static_cast<size_t>(size_ < capacity_);
+        population_ += static_cast<size_t>(size_ < capacity_);
         cur_ = lo < cur_ ? lo : cur_;
-        // t2 = std::chrono::high_resolution_clock::now();
-        // ss << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count() << " ns\t";
-        // std::cout << ss.str() << std::endl;
         return static_cast<size_t>(lo == cur_);
     }
 
@@ -82,12 +74,14 @@ class SearchBuffer {
         while (cur_ < size_ && is_checked(data_[cur_].id)) {
             ++cur_;
         }
+        population_--;
         return cur_id;
     }
 
     void clear() {
         size_ = 0;
         cur_ = 0;
+        population_ = 0;
     }
 
     [[nodiscard]] auto next_id() const { return data_[cur_].id; }

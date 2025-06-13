@@ -415,6 +415,7 @@ inline void QuantizedGraph::search_qg(
         // size_t num_too_far = 0;
         // size_t num_nearest = 0;
         // size_t num_inserted = 0;
+        // insert_times_[insert_time_pos_++] = search_pool_.population();
         const PID* ptr_nb = reinterpret_cast<const PID*>(&cur_data[neighbor_offset_]);
         for (uint32_t i = 0; i < degree_bound_; ++i) {
             // auto t1 = std::chrono::high_resolution_clock::now();
